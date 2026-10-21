@@ -9,8 +9,8 @@ export const theme = {
   modes: {
     normal: "#98bb6c",
     locked: "#e82424",
-    pane: "#7e9cd8",
-    tab: "#957fb8",
+    pane: "#7aa89f",
+    tab: "#c4a7e7",
     resize: "#ffa066",
     session: "#e6c384",
   },

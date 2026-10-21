@@ -1,4 +1,4 @@
-import { leaf, neighbor, paneIds, paneRects, removePane, resizePane, splitPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { lookup, type Command, type Key, type Mode } from "./keymap.ts";
 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
@@ -25,6 +25,7 @@ export class Workspace {
   prompt: Prompt | undefined;
   message: string | undefined;
   quit = false;
+  detachRequested = false;
   readonly paneNames = new Map<PaneId, string>();
   readonly popups: Popup[] = [];
   private nextPaneId = 1;
@@ -138,10 +139,10 @@ export class Workspace {
         if (command.index < this.tabs.length) this.active = command.index;
         return;
       case "resize":
-        this.tab.root = resizePane(this.tab.root, this.tab.focused, command.direction, resizeStep);
+        this.tab.root = (command.shrink ? shrinkPane : growPane)(this.tab.root, this.tab.focused, command.direction, resizeStep);
         return;
       case "detach":
-        this.message = "Detach is not available yet";
+        this.detachRequested = true;
         return;
       case "quit":
         this.quit = true;

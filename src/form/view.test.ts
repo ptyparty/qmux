@@ -114,6 +114,12 @@ describe("form view", () => {
     expect(await result).toEqual({ status: "submitted", values: { ok: false, orders: "one\ntwo", after: true } });
   });
 
+  test("text typed in the same burst as ctrl+s is submitted", async () => {
+    const { setup, result } = await open([{ type: "text", id: "name", label: "Name" }]);
+    setup.renderer.stdin.emit("data", Buffer.from("Revenge\x13"));
+    expect(await result).toEqual({ status: "submitted", values: { name: "Revenge" } });
+  });
+
   test("escape cancels", async () => {
     const { setup, result } = await open([{ type: "text", id: "name", label: "Name" }]);
     setup.mockInput.pressEscape();

@@ -8,13 +8,20 @@ import { UnsafeDirectoryError } from "./private-dir.ts";
 import { formSpec, parseFormSpec, type FormSpec } from "./form/schema.ts";
 import { showForm } from "./form/show.ts";
 import { serveStdio } from "./mcp/server.ts";
-import { runMux } from "./mux/app.ts";
+import { attachSession } from "./mux/session/client.ts";
+import { runServer } from "./mux/session/server.ts";
+import { defaultSessionName, listSessions, quitSession, SessionError } from "./mux/session/sessions.ts";
 
 const usage = `qmux: a terminal multiplexer agents can drive
 
 Usage:
-  qmux
-      Start the multiplexer in this terminal.
+  qmux [attach [NAME]]
+      Attach to session NAME (default "main"), starting it if it is not running.
+      Detach with Ctrl+o d; the session keeps running.
+  qmux ls
+      List running sessions.
+  qmux kill NAME
+      End a session and every program running in it.
   qmux ask [spec.json|-] [--wait] [--timeout SECONDS] [--host auto|qmux|zellij|tmux|none]
       Open a form for the user and print {"id", "host", "message", "status", ...}.
       With --wait, block until the user answers (or the timeout passes).
@@ -56,7 +63,15 @@ async function main(argv: string[]): Promise<void> {
     case "mcp":
       return serveStdio();
     case undefined:
-      return runMux();
+      return attachSession(defaultSessionName);
+    case "attach":
+      return attachSession(rest[0] ?? defaultSessionName);
+    case "ls":
+      return listCommand();
+    case "kill":
+      return quitSession(requireName(rest));
+    case "server":
+      return runServer(requireName(rest));
     case "help":
     case "--help":
     case "-h":
@@ -142,8 +157,25 @@ function requireId(positionals: string[]): string {
   return id;
 }
 
+async function listCommand(): Promise<void> {
+  const sessions = await listSessions();
+  if (sessions.length === 0) {
+    console.log("No running sessions. Start one with: qmux attach NAME");
+    return;
+  }
+  for (const session of sessions) {
+    console.log(`${session.session}  ${session.tabs} tab(s), ${session.panes} pane(s)${session.attached ? "  (attached)" : ""}`);
+  }
+}
+
+function requireName(args: string[]): string {
+  const [name] = args;
+  if (!name) throw new UsageError("missing session name");
+  return name;
+}
+
 function isReportable(error: unknown): error is Error {
-  return [UnknownAskError, HostLaunchError, AlreadyAnsweredError, UnsafeDirectoryError].some((type) => error instanceof type);
+  return [UnknownAskError, HostLaunchError, AlreadyAnsweredError, UnsafeDirectoryError, SessionError].some((type) => error instanceof type);
 }
 
 function print(value: unknown): void {

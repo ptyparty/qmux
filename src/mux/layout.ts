@@ -77,7 +77,15 @@ export function neighbor(root: LayoutNode, from: PaneId, direction: Direction): 
   return best?.id;
 }
 
-export function resizePane(root: LayoutNode, target: PaneId, direction: Direction, step: number): LayoutNode {
+export function growPane(root: LayoutNode, target: PaneId, direction: Direction, step: number): LayoutNode {
+  return transfer(root, target, direction, step) ?? transfer(root, target, opposite(direction), -step) ?? root;
+}
+
+export function shrinkPane(root: LayoutNode, target: PaneId, direction: Direction, step: number): LayoutNode {
+  return transfer(root, target, direction, -step) ?? root;
+}
+
+function transfer(root: LayoutNode, target: PaneId, direction: Direction, amount: number): LayoutNode | undefined {
   const axis: Axis = direction === "left" || direction === "right" ? "row" : "column";
   const towardStart = direction === "left" || direction === "up";
   const path = pathTo(root, target);
@@ -86,16 +94,21 @@ export function resizePane(root: LayoutNode, target: PaneId, direction: Directio
     if (split.axis !== axis) continue;
     const other = towardStart ? index - 1 : index + 1;
     if (other < 0 || other >= split.children.length) continue;
-    const grow = Math.min(step, split.children[other]!.weight - minimumWeight);
-    if (grow <= 0) return root;
+    const giver = amount > 0 ? split.children[other]! : split.children[index]!;
+    const moved = Math.sign(amount) * Math.min(Math.abs(amount), giver.weight - minimumWeight);
+    if (moved === 0 || Math.sign(moved) !== Math.sign(amount)) return root;
     const children = split.children.map((child, position) => {
-      if (position === index) return { ...child, weight: child.weight + grow };
-      if (position === other) return { ...child, weight: child.weight - grow };
+      if (position === index) return { ...child, weight: child.weight + moved };
+      if (position === other) return { ...child, weight: child.weight - moved };
       return child;
     });
     return replaceNode(root, split, { ...split, children });
   }
-  return root;
+  return undefined;
+}
+
+function opposite(direction: Direction): Direction {
+  return ({ left: "right", right: "left", up: "down", down: "up" } as const)[direction];
 }
 
 function normalize(children: WeightedNode[]): WeightedNode[] {

@@ -31,6 +31,7 @@ type Editor = InputRenderable | TextareaRenderable;
 interface ElementView {
   readonly root: BoxRenderable;
   sync(): void;
+  flush(): void;
   editorFor(focusable: Focusable): Editor | undefined;
 }
 
@@ -98,6 +99,7 @@ class FormView {
     const action = keyToAction(key, focused, editorPosition(this.editorFor(focused)));
     if (!action) return;
     key.preventDefault();
+    for (const view of this.views.values()) view.flush();
     this.controller.dispatch(action);
     this.sync();
   };
@@ -182,6 +184,8 @@ class NoteView implements ElementView {
 
   sync(): void {}
 
+  flush(): void {}
+
   editorFor(): undefined {
     return undefined;
   }
@@ -224,6 +228,8 @@ abstract class InputView implements ElementView {
     return false;
   }
 
+  flush(): void {}
+
   protected abstract syncBody(focused: boolean): void;
 
   editorFor(_focusable: Focusable): Editor | undefined {
@@ -253,6 +259,12 @@ class TextView extends InputView {
   }
 
   protected syncBody(): void {}
+
+  override flush(): void {
+    if (this.editor.plainText !== this.controller.text(this.element.id)) {
+      this.controller.dispatch({ type: "setText", id: this.element.id, value: this.editor.plainText });
+    }
+  }
 
   override editorFor(): Editor {
     return this.editor;
@@ -324,6 +336,12 @@ class ChoiceView extends InputView {
 
   protected override isOtherFocused(): boolean {
     return this.controller.isFocused({ kind: "other", element: this.element });
+  }
+
+  override flush(): void {
+    if (this.other.plainText !== this.controller.choice(this.element.id).otherText) {
+      this.controller.dispatch({ type: "setOtherText", id: this.element.id, value: this.other.plainText });
+    }
   }
 
   protected syncBody(focused: boolean): void {

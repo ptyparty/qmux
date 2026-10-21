@@ -1,24 +1,20 @@
 import { rmSync } from "node:fs";
-import { join } from "node:path";
 import { z } from "zod";
-import { ensurePrivateDir, runtimeDir } from "../private-dir.ts";
 
 export const controlRequest = z.discriminatedUnion("method", [
   z.object({
     method: z.literal("popup.open"),
     params: z.object({ title: z.string(), command: z.array(z.string()).min(1) }),
   }),
+  z.object({ method: z.literal("session.info") }),
+  z.object({ method: z.literal("session.quit") }),
 ]);
 
 export type ControlRequest = z.infer<typeof controlRequest>;
-export type ControlResponse = { ok: true } | { ok: false; error: string };
+export type ControlResponse = { ok: true; result?: unknown } | { ok: false; error: string };
 export type ControlHandler = (request: ControlRequest) => ControlResponse | Promise<ControlResponse>;
 
 export class ControlError extends Error {}
-
-export function controlSocketPath(): string {
-  return join(ensurePrivateDir(join(runtimeDir(), "sockets")), `mux-${process.pid}.sock`);
-}
 
 export function serveControl(path: string, handler: ControlHandler): { stop: () => void } {
   rmSync(path, { force: true });

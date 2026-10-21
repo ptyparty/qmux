@@ -143,6 +143,13 @@ describe("Workspace", () => {
     expect(workspace.paneNames.get(1)).toBe("server");
   });
 
+  test("session mode d asks to detach", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+o", "d");
+    expect(workspace.detachRequested).toBe(true);
+    expect(workspace.mode).toBe("normal");
+  });
+
   test("quitting takes session mode then shift+q", () => {
     const workspace = new Workspace(new FakeHost());
     press(workspace, "ctrl+q");
@@ -178,9 +185,9 @@ describe("Workspace", () => {
 
   test("resize mode grows the focused pane", () => {
     const workspace = new Workspace(new FakeHost());
-    press(workspace, "ctrl+p", "r", "ctrl+n", "h", "h");
+    press(workspace, "ctrl+p", "r", "ctrl+n", "h", "h", "shift+h");
     const root = workspace.tab.root as { children: { weight: number }[] };
-    expect(root.children[0]!.weight).toBeCloseTo(0.4);
-    expect(root.children[1]!.weight).toBeCloseTo(0.6);
+    expect(root.children[0]!.weight).toBeCloseTo(0.45);
+    expect(root.children[1]!.weight).toBeCloseTo(0.55);
   });
 });

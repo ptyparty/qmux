@@ -16,7 +16,7 @@ export type Command =
   | { type: "cycle-tab"; delta: number }
   | { type: "move-tab"; delta: number }
   | { type: "go-to-tab"; index: number }
-  | { type: "resize"; direction: Direction }
+  | { type: "resize"; direction: Direction; shrink: boolean }
   | { type: "detach" }
   | { type: "quit" };
 
@@ -112,8 +112,15 @@ export const keymap: Record<Mode, ModeKeys> = {
     ],
   },
   resize: {
-    bindings: [...directional(dvorak, "", (direction) => ({ type: "resize", direction })), backToNormal],
-    hints: [{ keys: "h/t/n/s ←↑↓→", description: "grow" }, backHint],
+    bindings: [
+      ...directional(dvorak, "", (direction) => ({ type: "resize", direction, shrink: false })),
+      ...(Object.entries(dvorak) as [Direction, string][]).map(([direction, letter]): Binding => ({
+        keys: [`shift+${letter}`],
+        command: { type: "resize", direction, shrink: true },
+      })),
+      backToNormal,
+    ],
+    hints: [{ keys: "h/t/n/s ←↑↓→", description: "move border" }, { keys: "H/T/N/S", description: "shrink" }, backHint],
   },
   session: {
     bindings: [

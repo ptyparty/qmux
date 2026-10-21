@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { leaf, neighbor, paneIds, paneRects, removePane, resizePane, splitPane, type LayoutNode } from "./layout.ts";
+import { growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, type LayoutNode } from "./layout.ts";
 
 function grid(): LayoutNode {
   let root = leaf(1);
@@ -50,16 +50,28 @@ describe("layout", () => {
     expect(neighbor(root, 2, "right")).toBeUndefined();
   });
 
-  test("resizing moves weight from the neighbor in that direction", () => {
-    const root = resizePane(grid(), 1, "right", 0.1);
-    expect(paneRects(root).get(1)!.width).toBeCloseTo(0.6);
-    expect(paneRects(resizePane(grid(), 3, "up", 0.1)).get(3)!.height).toBeCloseTo(0.6);
-    expect(resizePane(grid(), 1, "left", 0.1)).toEqual(grid());
+  test("growing takes room from the neighbor on that side", () => {
+    expect(paneRects(growPane(grid(), 1, "right", 0.1)).get(1)!.width).toBeCloseTo(0.6);
+    expect(paneRects(growPane(grid(), 3, "up", 0.1)).get(3)!.height).toBeCloseTo(0.6);
+  });
+
+  test("growing toward an outer edge moves the other border instead", () => {
+    expect(paneRects(growPane(grid(), 1, "left", 0.1)).get(1)!.width).toBeCloseTo(0.4);
+    expect(paneRects(growPane(grid(), 2, "right", 0.1)).get(2)!.width).toBeCloseTo(0.4);
+    expect(paneRects(growPane(grid(), 2, "up", 0.1)).get(2)!.height).toBeCloseTo(0.4);
+  });
+
+  test("shrinking gives room to the neighbor on that side", () => {
+    expect(paneRects(shrinkPane(grid(), 1, "right", 0.1)).get(1)!.width).toBeCloseTo(0.4);
+    expect(paneRects(shrinkPane(grid(), 2, "left", 0.1)).get(2)!.width).toBeCloseTo(0.4);
+    expect(shrinkPane(grid(), 1, "left", 0.1)).toEqual(grid());
   });
 
   test("resizing stops at the minimum size", () => {
     let root = grid();
-    for (let i = 0; i < 20; i++) root = resizePane(root, 1, "right", 0.1);
+    for (let i = 0; i < 20; i++) root = growPane(root, 1, "right", 0.1);
     expect(paneRects(root).get(2)!.width).toBeCloseTo(0.05);
+    for (let i = 0; i < 20; i++) root = shrinkPane(root, 1, "right", 0.1);
+    expect(paneRects(root).get(1)!.width).toBeCloseTo(0.05);
   });
 });

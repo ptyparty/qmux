@@ -148,7 +148,7 @@ describe("Workspace", () => {
     const host = new FakeHost();
     const workspace = new Workspace(host);
     press(workspace, "ctrl+t", "c", "ctrl+t", "x");
-    expect(workspace.prompt?.label).toBe('Type "Tab #2" to close this tab');
+    expect(workspace.prompt).toMatchObject({ title: "Close tab", detail: 'Type "Tab #2" to close it' });
     type(workspace, "nope");
     press(workspace, "return");
     expect(workspace.tabs).toHaveLength(2);
@@ -263,6 +263,19 @@ describe("Workspace", () => {
     expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { panes: [3, 4, 5], expanded: 2 } }] });
     press(workspace, "alt+h", "ctrl+p", "s");
     expect(workspace.tab.root).toMatchObject({ children: [{ node: { kind: "stack", panes: [2, 6], expanded: 1 } }, {}] });
+  });
+
+  test("the project launcher selects matches with the arrow keys", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+t", "o");
+    type(workspace, "pen");
+    expect(workspace.prompt?.matches?.map((match) => match.name)).toEqual(["penguin", "penguin-auth"]);
+    press(workspace, "down");
+    expect(workspace.prompt?.selected).toBe(1);
+    press(workspace, "down");
+    expect(workspace.prompt?.selected).toBe(0);
+    press(workspace, "up", "return");
+    expect(workspace.tab.name).toBe("penguin-auth");
   });
 
   test("opening a project that already has a tab switches to it", () => {

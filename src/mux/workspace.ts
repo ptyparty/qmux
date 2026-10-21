@@ -1,7 +1,7 @@
 import { addToFirstStack, expandPane, growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, stackPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { defaultConfig, planLayout, type Config, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
-import { expandHome, rankProjects, resolveTarget, type Project } from "./projects.ts";
+import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
 
@@ -9,10 +9,12 @@ export type Popup = { id: PaneId; title: string };
 
 export type Prompt = {
   kind: "rename-tab" | "rename-pane" | "close-tab" | "open-project";
-  label: string;
+  title: string;
+  detail?: string;
   text: string;
   candidates?: Project[];
   matches?: Project[];
+  selected: number;
 };
 
 export interface PaneHost {
@@ -187,20 +189,20 @@ export class Workspace {
         this.tab.zoomed = !this.tab.zoomed;
         return;
       case "rename-pane":
-        this.prompt = { kind: "rename-pane", label: "Rename pane", text: this.paneNames.get(this.tab.focused) ?? "" };
+        this.prompt = { kind: "rename-pane", title: "Rename pane", text: this.paneNames.get(this.tab.focused) ?? "", selected: 0 };
         return;
       case "new-tab":
         return this.openTab(this.config.defaultCwd ? expandHome(this.config.defaultCwd) : this.host.cwd(this.tab.focused));
       case "open-project": {
         const candidates = this.host.projects();
-        this.prompt = { kind: "open-project", label: "Open project", text: "", candidates, matches: candidates.slice(0, shownMatches) };
+        this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates.slice(0, shownMatches), selected: 0 };
         return;
       }
       case "close-tab":
-        this.prompt = { kind: "close-tab", label: `Type "${this.tab.name}" to close this tab`, text: "" };
+        this.prompt = { kind: "close-tab", title: "Close tab", detail: `Type "${this.tab.name}" to close it`, text: "", selected: 0 };
         return;
       case "rename-tab":
-        this.prompt = { kind: "rename-tab", label: "Rename tab", text: this.tab.name };
+        this.prompt = { kind: "rename-tab", title: "Rename tab", text: this.tab.name, selected: 0 };
         return;
       case "cycle-tab":
         this.active = wrap(this.active + command.delta, this.tabs.length);
@@ -296,10 +298,21 @@ export class Workspace {
       this.prompt = undefined;
       return this.commitPrompt(prompt);
     }
-    if (key.name === "backspace") prompt.text = prompt.text.slice(0, -1);
-    else if (key.name === "tab" && prompt.matches?.[0]) prompt.text = prompt.matches[0].name;
+    const matches = prompt.matches ?? [];
+    if (key.name === "up" || key.name === "down") {
+      if (matches.length > 0) prompt.selected = (prompt.selected + (key.name === "up" ? -1 : 1) + matches.length) % matches.length;
+      return;
+    }
+    if (key.name === "tab") {
+      const selected = matches[prompt.selected];
+      if (selected) prompt.text = selected.name;
+    } else if (key.name === "backspace") prompt.text = prompt.text.slice(0, -1);
     else if (!key.ctrl && !key.meta && isPrintable(key.sequence)) prompt.text += key.sequence;
-    if (prompt.candidates) prompt.matches = rankProjects(prompt.text, prompt.candidates).slice(0, shownMatches);
+    else return;
+    if (prompt.candidates) {
+      prompt.matches = rankProjects(prompt.text, prompt.candidates).slice(0, shownMatches);
+      prompt.selected = 0;
+    }
   }
 
   private commitPrompt(prompt: Prompt): void {
@@ -317,7 +330,7 @@ export class Workspace {
         this.message = "Kept the tab";
         return;
       case "open-project": {
-        const target = text || prompt.matches?.[0]?.name;
+        const target = looksLikePath(text) ? text : (prompt.matches?.[prompt.selected]?.name ?? text);
         if (target) this.message = this.openProject(target);
         return;
       }

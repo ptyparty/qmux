@@ -1,6 +1,7 @@
 import { BoxRenderable, TextRenderable, bg, bold, fg, type CliRenderer, type StyledText } from "@opentui/core";
 import { styled, type Part } from "../ui/styled.ts";
 import { hints, modeHints, type Hint, type Mode } from "./keymap.ts";
+import { Launcher } from "./launcher.ts";
 import { paneIds, shownMember, type LayoutNode, type PaneId, type StackNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { theme } from "./theme.ts";
@@ -14,6 +15,7 @@ export class MuxView {
   private readonly overlay: BoxRenderable;
   private bodySignature = "";
   private readonly stackTitles = new Map<PaneId, TextRenderable>();
+  private readonly launcher: Launcher;
   private overlayPane: PaneId | undefined;
 
   constructor(
@@ -42,6 +44,7 @@ export class MuxView {
     });
     renderer.root.add(root);
     renderer.root.add(this.overlay);
+    this.launcher = new Launcher(renderer);
   }
 
   render(): void {
@@ -58,6 +61,7 @@ export class MuxView {
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();
     this.hintBar.content = this.renderHints();
+    this.launcher.render(this.workspace.prompt);
   }
 
   private renderBody(root: LayoutNode, zoomed: PaneId | undefined): void {
@@ -163,17 +167,7 @@ export class MuxView {
 
   private renderHints(): StyledText {
     const { prompt, message, mode } = this.workspace;
-    if (prompt) {
-      const parts: Part[] = [" ", bold(fg(theme.warning)(prompt.label)), ": ", fg(theme.text)(prompt.text), bg(theme.text)(" ")];
-      if (prompt.matches) {
-        parts.push("  ");
-        prompt.matches.forEach((match, index) => parts.push(index === 0 ? bold(fg(theme.accent)(match.name)) : fg(theme.muted)(match.name), "  "));
-        parts.push(fg(theme.muted)(prompt.matches.length ? "· Tab complete · Enter open · Esc cancel" : "no matches · Esc cancel"));
-      } else {
-        parts.push(fg(theme.muted)("   Enter confirm · Esc cancel"));
-      }
-      return styled(parts);
-    }
+    if (prompt) return styled(hintParts(mode, [{ keys: "Enter", description: "confirm" }, { keys: "Esc", description: "cancel" }]));
     if (message) return styled([" ", fg(theme.warning)(message)]);
     if ((mode === "normal" || mode === "locked") && this.workspace.focusedPaneHeld()) {
       return styled([" ", fg(theme.warning)("Command exited"), fg(theme.border)("  ·  "), ...hintParts(mode, heldHints).slice(1)]);

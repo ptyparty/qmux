@@ -17,7 +17,6 @@ export type ControlHandler = (request: ControlRequest) => ControlResponse | Prom
 export class ControlError extends Error {}
 
 export function serveControl(path: string, handler: ControlHandler): { stop: () => void } {
-  rmSync(path, { force: true });
   const buffers = new WeakMap<object, string>();
   const server = Bun.listen({
     unix: path,

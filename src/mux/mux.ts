@@ -19,6 +19,8 @@ export type MuxOptions = {
 
 export type Mux = {
   handleControl: (request: ControlRequest) => ControlResponse;
+  counts: () => { tabs: number; panes: number };
+  setClients: (count: number) => void;
   shutdown: () => void;
 };
 
@@ -63,6 +65,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       panes.get(id)?.destroy();
       panes.delete(id);
     },
+    closePopup: (id) => panes.get(id)?.kill(),
     cwd: (id) => panes.get(id)?.cwd(),
     screen: () => ({ cols: renderer.width, rows: renderer.height }),
   };
@@ -79,7 +82,8 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   };
 
   const onKey = (key: KeyEvent) => {
-    if (workspace.handleKey(key)) key.preventDefault();
+    if (!workspace.handleKey(key)) return;
+    key.preventDefault();
     refresh();
   };
   renderer.keyInput.on("keypress", onKey);
@@ -107,6 +111,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           refresh();
           return { ok: true };
       }
+    },
+    counts: () => ({ tabs: workspace.tabs.length, panes: panes.size }),
+    setClients: (count) => {
+      workspace.clients = count;
+      refresh();
     },
     shutdown,
   };

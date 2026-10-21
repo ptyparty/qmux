@@ -19,7 +19,6 @@ export class UnknownAskError extends Error {
 }
 
 export function defaultAskRoot(): string {
-  if (process.env.QMUX_STATE_DIR) return join(process.env.QMUX_STATE_DIR, "asks");
   return join(runtimeDir(), "asks");
 }
 

@@ -9,6 +9,8 @@ const EAGAIN = 11;
 const EINTR = 4;
 const maxSlots = 512;
 const readSize = 64 * 1024;
+const writeRetryMs = 10;
+const maxPendingInput = 1024 * 1024;
 
 const libc = dlopen("libc.so.6", {
   openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
@@ -164,6 +166,9 @@ export class Pty {
   private readonly slot: number;
   private readonly buffer = new Uint8Array(readSize);
   private closed = false;
+  private pendingInput: Uint8Array[] = [];
+  private pendingBytes = 0;
+  private retryTimer: Timer | undefined;
 
   constructor(private readonly options: PtyOptions) {
     reactor ??= new Reactor();
@@ -184,15 +189,33 @@ export class Pty {
   }
 
   write(data: string | Uint8Array): void {
-    const bytes = typeof data === "string" ? Buffer.from(data) : data;
-    let offset = 0;
-    while (offset < bytes.length && !this.closed) {
+    if (this.closed) return;
+    const bytes = typeof data === "string" ? Buffer.from(data) : Uint8Array.from(data);
+    if (this.pendingBytes + bytes.length > maxPendingInput) return;
+    this.pendingInput.push(bytes);
+    this.pendingBytes += bytes.length;
+    this.flushInput();
+  }
+
+  private flushInput(): void {
+    this.retryTimer = undefined;
+    while (this.pendingInput.length > 0 && !this.closed) {
+      const next = this.pendingInput[0]!;
+      let written: number;
       try {
-        offset += writeSync(this.master, bytes, offset);
+        written = writeSync(this.master, next);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
-        Bun.sleepSync(1);
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EAGAIN") {
+          this.retryTimer ??= setTimeout(() => this.flushInput(), writeRetryMs);
+          return;
+        }
+        if (code === "EIO") return;
+        throw error;
       }
+      this.pendingBytes -= written;
+      if (written < next.length) this.pendingInput[0] = next.subarray(written);
+      else this.pendingInput.shift();
     }
   }
 
@@ -229,6 +252,8 @@ export class Pty {
   private close(): void {
     if (this.closed) return;
     this.closed = true;
+    clearTimeout(this.retryTimer);
+    this.pendingInput = [];
     reactor!.unwatch(this.slot);
     closeSync(this.master);
   }

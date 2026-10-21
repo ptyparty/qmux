@@ -11,6 +11,7 @@ let stop: (() => void) | undefined;
 afterEach(() => {
   stop?.();
   stop = undefined;
+  rmSync(path, { force: true });
 });
 
 describe("control socket", () => {

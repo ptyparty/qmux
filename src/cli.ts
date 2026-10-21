@@ -164,7 +164,7 @@ async function listCommand(): Promise<void> {
     return;
   }
   for (const session of sessions) {
-    console.log(`${session.session}  ${session.tabs} tab(s), ${session.panes} pane(s)${session.attached ? "  (attached)" : ""}`);
+    console.log(`${session.session}  ${session.tabs} tab(s), ${session.panes} pane(s)${session.attached > 0 ? `  (${session.attached} attached)` : ""}`);
   }
 }
 

@@ -11,6 +11,10 @@ class FakeHost implements PaneHost {
   destroy(id: number): void {
     this.destroyed.push(id);
   }
+  closedPopups: number[] = [];
+  closePopup(id: number): void {
+    this.closedPopups.push(id);
+  }
   cwd(id: number): string | undefined {
     return `/work/${id}`;
   }
@@ -174,13 +178,24 @@ describe("Workspace", () => {
     const second = workspace.reservePaneId();
     workspace.openPopup(first, "Deploy?");
     workspace.openPopup(second, "Second");
-    expect(press(workspace, "ctrl+p", "escape", "ctrl+o")).toEqual([false, false, false]);
+    expect(press(workspace, "ctrl+p", "escape", "x")).toEqual([false, false, false]);
     expect(workspace.mode).toBe("normal");
     workspace.popupExited(first);
     expect(workspace.popup?.title).toBe("Second");
     workspace.popupExited(second);
     expect(press(workspace, "ctrl+p")).toEqual([true]);
     expect(workspace.mode).toBe("pane");
+  });
+
+  test("session mode still works over a popup, so a stuck popup can be closed or detached from", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    const id = workspace.reservePaneId();
+    workspace.openPopup(id, "Stuck");
+    expect(press(workspace, "ctrl+o", "x")).toEqual([true, true]);
+    expect(host.closedPopups).toEqual([id]);
+    press(workspace, "ctrl+o", "d");
+    expect(workspace.detachRequested).toBe(true);
   });
 
   test("resize mode grows the focused pane", () => {

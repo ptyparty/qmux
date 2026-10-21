@@ -11,16 +11,21 @@ const startTimeoutMs = 5000;
 
 export class SessionError extends Error {}
 
-export type SessionPaths = { client: string; control: string; log: string };
+export type SessionPaths = { client: string; control: string; log: string; lock: string };
 
-export type SessionInfo = { session: string; tabs: number; panes: number; attached: boolean };
+export type SessionInfo = { session: string; tabs: number; panes: number; attached: number };
 
 export function sessionPaths(name: string): SessionPaths {
   if (!namePattern.test(name)) {
     throw new SessionError(`session names use letters, digits, ".", "_", and "-", and start with a letter or digit; got ${JSON.stringify(name)}`);
   }
   const dir = ensurePrivateDir(join(runtimeDir(), "sessions"));
-  return { client: join(dir, `${name}.sock`), control: join(dir, `${name}.control.sock`), log: join(dir, `${name}.log`) };
+  return {
+    client: join(dir, `${name}.sock`),
+    control: join(dir, `${name}.control.sock`),
+    log: join(dir, `${name}.log`),
+    lock: join(dir, `${name}.lock`),
+  };
 }
 
 export async function sessionInfo(name: string): Promise<SessionInfo | undefined> {

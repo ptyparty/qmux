@@ -12,9 +12,9 @@ const launchFailureWindowMs = 300;
 
 export function resolveHost(requested: HostName, env: Record<string, string | undefined> = process.env): ResolvedHost {
   if (requested !== "auto") return requested;
-  if (env.QMUX_SOCKET !== undefined) return "qmux";
   if (env.ZELLIJ !== undefined || env.ZELLIJ_SESSION_NAME !== undefined) return "zellij";
   if (env.TMUX !== undefined) return "tmux";
+  if (env.QMUX_SOCKET !== undefined) return "qmux";
   return "none";
 }
 

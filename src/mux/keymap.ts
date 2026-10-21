@@ -18,6 +18,7 @@ export type Command =
   | { type: "go-to-tab"; index: number }
   | { type: "resize"; direction: Direction; shrink: boolean }
   | { type: "detach" }
+  | { type: "close-popup" }
   | { type: "quit" };
 
 export type Binding = { keys: string[]; command: Command; then?: Mode };
@@ -125,10 +126,11 @@ export const keymap: Record<Mode, ModeKeys> = {
   session: {
     bindings: [
       { keys: ["d"], command: { type: "detach" }, then: "normal" },
+      { keys: ["x"], command: { type: "close-popup" }, then: "normal" },
       { keys: ["shift+q"], command: { type: "quit" } },
       backToNormal,
     ],
-    hints: [{ keys: "d", description: "detach" }, { keys: "Q", description: "quit" }, backHint],
+    hints: [{ keys: "d", description: "detach" }, { keys: "x", description: "close popup" }, { keys: "Q", description: "quit" }, backHint],
   },
 };
 

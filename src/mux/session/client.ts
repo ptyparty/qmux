@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { encodeFrame, FrameDecoder, type Frame, type Goodbye } from "./protocol.ts";
-import { sessionInfo, sessionPaths, startServer } from "./sessions.ts";
+import { sessionInfo, sessionPaths, SessionError, startServer } from "./sessions.ts";
 import { SocketWriter } from "./socket-writer.ts";
 
 const forwardedEnv = ["TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "LANG", "LC_ALL"];
@@ -8,6 +8,9 @@ const forwardedEnv = ["TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION
 type Connection = { decoder: FrameDecoder; writer: SocketWriter };
 
 export async function attachSession(name: string): Promise<never> {
+  if (process.env.QMUX_SESSION === name) {
+    throw new SessionError(`this terminal is already inside session ${name}; attaching it to itself would hide the session`);
+  }
   const paths = sessionPaths(name);
   if (!(await sessionInfo(name))) await startServer(name);
   const stdin = process.stdin;
@@ -46,7 +49,7 @@ export async function attachSession(name: string): Promise<never> {
           finish({ reason: "error", message: `Lost the connection to session ${name}` });
         },
       },
-    }).catch(reject);
+    }).catch((error: Error) => reject(new SessionError(`could not connect to session ${name}: ${error.message}`)));
   });
 
   stdin.setRawMode?.(false);

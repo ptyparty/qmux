@@ -120,6 +120,7 @@ export class MuxView {
       const label = ` ${index + 1} ${tab.name} `;
       parts.push(index === this.workspace.active ? bold(bg(theme.accent)(fg(theme.background)(label))) : fg(theme.muted)(label), " ");
     });
+    if (this.workspace.clients > 1) parts.push(fg(theme.warning)(` ${this.workspace.clients} terminals attached `));
     return styled(parts);
   }
 

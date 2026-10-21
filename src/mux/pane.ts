@@ -79,6 +79,10 @@ export class Pane {
     }
   }
 
+  kill(): void {
+    this.pty.child.kill();
+  }
+
   destroy(): void {
     this.pty.kill();
     this.frame.destroyRecursively();

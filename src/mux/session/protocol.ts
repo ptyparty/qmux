@@ -1,6 +1,6 @@
 export type Hello = { cols: number; rows: number; env: Record<string, string> };
 export type Size = { cols: number; rows: number };
-export type Goodbye = { reason: "detached" | "exited" | "replaced" | "error"; message: string };
+export type Goodbye = { reason: "detached" | "exited" | "error"; message: string };
 
 export type Frame =
   | { type: "hello"; body: Hello }

@@ -1,5 +1,5 @@
 import { growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
-import { lookup, type Command, type Key, type Mode } from "./keymap.ts";
+import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
 
@@ -10,6 +10,7 @@ export type Prompt = { kind: "rename-tab" | "rename-pane" | "close-tab"; label: 
 export interface PaneHost {
   create(id: PaneId, cwd: string | undefined): void;
   destroy(id: PaneId): void;
+  closePopup(id: PaneId): void;
   cwd(id: PaneId): string | undefined;
   screen(): { cols: number; rows: number };
 }
@@ -26,6 +27,7 @@ export class Workspace {
   message: string | undefined;
   quit = false;
   detachRequested = false;
+  clients = 1;
   readonly paneNames = new Map<PaneId, string>();
   readonly popups: Popup[] = [];
   private nextPaneId = 1;
@@ -61,7 +63,7 @@ export class Workspace {
 
   handleKey(key: InputKey): boolean {
     this.message = undefined;
-    if (this.popup) return false;
+    if (this.popup && this.mode !== "session" && !(keyName(key) === "ctrl+o")) return false;
     if (this.prompt) {
       this.editPrompt(key);
       return true;
@@ -143,6 +145,10 @@ export class Workspace {
         return;
       case "detach":
         this.detachRequested = true;
+        return;
+      case "close-popup":
+        if (this.popup) this.host.closePopup(this.popup.id);
+        else this.message = "No popup is open";
         return;
       case "quit":
         this.quit = true;

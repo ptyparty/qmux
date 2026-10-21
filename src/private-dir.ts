@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 export class UnsafeDirectoryError extends Error {}
 
 export function runtimeDir(): string {
+  if (process.env.QMUX_STATE_DIR) return process.env.QMUX_STATE_DIR;
   const base = process.env.XDG_RUNTIME_DIR ?? join(tmpdir(), `qmux-${process.getuid?.() ?? "user"}`);
   return join(base, "qmux");
 }

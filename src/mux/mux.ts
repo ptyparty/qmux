@@ -2,7 +2,7 @@ import type { CliRenderer, KeyEvent } from "@opentui/core";
 import type { Config } from "./config.ts";
 import type { ControlRequest, ControlResponse } from "./control.ts";
 import { findProjects } from "./projects.ts";
-import type { PaneId } from "./layout.ts";
+import { paneIds, type PaneId } from "./layout.ts";
 import { Pane } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
 import { MuxView } from "./view.ts";
@@ -31,7 +31,7 @@ export type Mux = {
 export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   const scheduler = new ReadScheduler(readBudgetMs, readWindowMs);
   const panes = new Map<PaneId, Pane>();
-  const paneEnv = { QMUX_SOCKET: options.controlSocket, QMUX_SESSION: options.session };
+  const paneEnv = { ...options.config.env, QMUX_SOCKET: options.controlSocket, QMUX_SESSION: options.session };
   let view: MuxView | undefined;
   let stopped = false;
 
@@ -48,8 +48,8 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     view?.render();
   };
 
-  const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, holdOnExit = false) => {
-    panes.set(id, new Pane(renderer, id, { cwd, command, env: paneEnv, holdOnExit }, scheduler, {
+  const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, holdOnExit = false, frameless = false) => {
+    panes.set(id, new Pane(renderer, id, { cwd, command, env: paneEnv, holdOnExit, frameless }, scheduler, {
       onHeld: () => refresh(),
       onExit: (exited) => {
         panes.get(exited)?.destroy();
@@ -87,12 +87,26 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   });
   view.render();
 
-  const openPopup = (title: string, command: string[]) => {
+  const openPopup = (title: string, command: string[], askingPane: PaneId | undefined) => {
     const id = workspace.reservePaneId();
-    spawnPane(id, host.cwd(workspace.tab.focused), command, (exited) => workspace.popupExited(exited));
-    workspace.openPopup(id, title);
+    spawnPane(id, host.cwd(askingPane ?? workspace.tab.focused), command, (exited) => workspace.popupExited(exited), false, true);
+    workspace.openPopup(id, title, askingPane);
     refresh();
   };
+
+  renderer.on("focused_renderable", (renderable: unknown) => {
+    const pane = [...panes.values()].find((candidate) => candidate.owns(renderable));
+    if (!pane || pane.id === workspace.tab.focused || workspace.popup || !paneIds(workspace.tab.root).includes(pane.id)) return;
+    workspace.focusPane(pane.id);
+    refresh();
+  });
+
+  renderer.on("selection", (selection: { getSelectedText(): string }) => {
+    const text = selection.getSelectedText();
+    if (text.trim() === "") return;
+    workspace.message = renderer.copyToClipboardOSC52(text) ? `Copied ${text.length} characters` : "This terminal does not support copying (OSC 52)";
+    refresh();
+  });
 
   const onKey = (key: KeyEvent) => {
     if (!workspace.handleKey(key)) return;
@@ -115,7 +129,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     handleControl: (request) => {
       switch (request.method) {
         case "popup.open":
-          openPopup(request.params.title, request.params.command);
+          openPopup(request.params.title, request.params.command, request.params.paneId);
           return { ok: true };
         case "session.info":
           return { ok: true, result: { session: options.session, tabs: workspace.tabs.length, panes: panes.size } };

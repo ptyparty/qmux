@@ -5,7 +5,7 @@ import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } 
 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
 
-export type Popup = { id: PaneId; title: string };
+export type Popup = { id: PaneId; title: string; tabId: number };
 
 export type Prompt = {
   kind: "rename-tab" | "rename-pane" | "close-tab" | "open-project";
@@ -32,6 +32,7 @@ export interface PaneHost {
 export type InputKey = Key & { sequence: string };
 
 const resizeStep = 0.05;
+const popupPassthrough = new Set(["ctrl+t", "ctrl+o"]);
 const shownMatches = 6;
 
 export class Workspace {
@@ -61,15 +62,20 @@ export class Workspace {
   }
 
   get popup(): Popup | undefined {
-    return this.popups[0];
+    return this.popups.find((popup) => popup.tabId === this.tab.id);
+  }
+
+  popupsWaiting(tab: Tab): number {
+    return this.popups.filter((popup) => popup.tabId === tab.id).length;
   }
 
   reservePaneId(): PaneId {
     return this.nextPaneId++;
   }
 
-  openPopup(id: PaneId, title: string): void {
-    this.popups.push({ id, title });
+  openPopup(id: PaneId, title: string, askingPane?: PaneId): void {
+    const owner = this.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane)) ?? this.tab;
+    this.popups.push({ id, title, tabId: owner.id });
   }
 
   popupExited(id: PaneId): void {
@@ -91,7 +97,7 @@ export class Workspace {
 
   private dispatchKey(key: InputKey): boolean {
     this.message = undefined;
-    if (this.popup && this.mode !== "session" && !(keyName(key) === "ctrl+o")) return false;
+    if (this.popup && this.mode === "normal" && !popupPassthrough.has(keyName(key))) return false;
     if (this.prompt) {
       this.editPrompt(key);
       return true;

@@ -66,7 +66,8 @@ async function openQmuxPopup(command: string[], title: string): Promise<void> {
   const socket = process.env.QMUX_SOCKET;
   if (!socket) throw new HostLaunchError("QMUX_SOCKET is not set; run this from a qmux pane");
   try {
-    const response = await sendControl(socket, { method: "popup.open", params: { title, command } });
+    const paneId = process.env.QMUX_PANE_ID === undefined ? undefined : Number(process.env.QMUX_PANE_ID);
+    const response = await sendControl(socket, { method: "popup.open", params: { title, command, paneId } });
     if (!response.ok) throw new HostLaunchError(`qmux refused the popup: ${response.error}`);
   } catch (error) {
     if (error instanceof ControlError) throw new HostLaunchError(error.message);

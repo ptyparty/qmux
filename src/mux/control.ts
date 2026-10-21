@@ -4,7 +4,7 @@ import { z } from "zod";
 export const controlRequest = z.discriminatedUnion("method", [
   z.object({
     method: z.literal("popup.open"),
-    params: z.object({ title: z.string(), command: z.array(z.string()).min(1) }),
+    params: z.object({ title: z.string(), command: z.array(z.string()).min(1), paneId: z.number().int().optional() }),
   }),
   z.object({ method: z.literal("project.open"), params: z.object({ target: z.string().min(1) }) }),
   z.object({ method: z.literal("session.info") }),

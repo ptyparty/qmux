@@ -92,7 +92,7 @@ export class MuxView {
     }
     this.overlay.visible = pane !== undefined;
     if (!pane) return false;
-    const waiting = this.workspace.popups.length - 1;
+    const waiting = this.workspace.popupsWaiting(this.workspace.tab) - 1;
     pane.show(waiting > 0 ? `${popup.title} (+${waiting} waiting)` : popup.title, true);
     return true;
   }
@@ -145,7 +145,8 @@ export class MuxView {
   private renderTabs(): StyledText {
     const parts: Part[] = [bold(fg(theme.accent)(" qmux "))];
     this.workspace.tabs.forEach((tab, index) => {
-      const label = ` ${index + 1} ${tab.name} `;
+      const asking = this.workspace.popupsWaiting(tab) > 0 ? " ?" : "";
+      const label = ` ${index + 1} ${tab.name}${asking} `;
       parts.push(index === this.workspace.active ? bold(bg(theme.accent)(fg(theme.background)(label))) : fg(theme.muted)(label), " ");
     });
     if (this.workspace.clients > 1) parts.push(fg(theme.warning)(` ${this.workspace.clients} terminals attached `));

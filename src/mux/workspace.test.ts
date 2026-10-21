@@ -206,11 +206,27 @@ describe("Workspace", () => {
     workspace.openPopup(second, "Second");
     expect(press(workspace, "ctrl+p", "escape", "x")).toEqual([false, false, false]);
     expect(workspace.mode).toBe("normal");
+    expect(workspace.mode).toBe("normal");
     workspace.popupExited(first);
     expect(workspace.popup?.title).toBe("Second");
     workspace.popupExited(second);
     expect(press(workspace, "ctrl+p")).toEqual([true]);
     expect(workspace.mode).toBe("pane");
+  });
+
+  test("a popup belongs to the asking pane's tab and tab keys still work over it", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+t", "c");
+    const popup = workspace.reservePaneId();
+    workspace.openPopup(popup, "Question", 1);
+    expect(workspace.popup).toBeUndefined();
+    expect(workspace.popupsWaiting(workspace.tabs[0]!)).toBe(1);
+    expect(press(workspace, "a")).toEqual([false]);
+    press(workspace, "ctrl+t", "h", "escape");
+    expect(workspace.popup?.title).toBe("Question");
+    expect(press(workspace, "a")).toEqual([false]);
+    expect(press(workspace, "ctrl+t", "s")).toEqual([true, true]);
+    expect(workspace.active).toBe(1);
   });
 
   test("session mode still works over a popup, so a stuck popup can be closed or detached from", () => {

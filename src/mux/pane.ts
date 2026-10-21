@@ -12,7 +12,13 @@ export type PaneEvents = {
   onClick: (id: PaneId) => void;
 };
 
-export type PaneOptions = { cwd?: string; command?: string[]; env?: Record<string, string>; holdOnExit?: boolean };
+export type PaneOptions = {
+  cwd?: string;
+  command?: string[];
+  env?: Record<string, string>;
+  holdOnExit?: boolean;
+  frameless?: boolean;
+};
 
 const resetTerminal = "\x1bc";
 
@@ -34,17 +40,16 @@ export class Pane {
     this.view = new EmbeddedTerminalRenderable(renderer, {
       width: "100%",
       height: "100%",
+      selectable: true,
       onData: (data) => this.pty.write(data),
       onTerminalResize: (cols, rows) => {
         this.size = { cols, rows };
         this.pty.resize(cols, rows);
       },
     });
+    const border = options.frameless ? {} : { border: true, borderStyle: "rounded" as const, borderColor: theme.border, titleColor: theme.muted };
     this.frame = new BoxRenderable(renderer, {
-      border: true,
-      borderStyle: "rounded",
-      borderColor: theme.border,
-      titleColor: theme.muted,
+      ...border,
       backgroundColor: theme.background,
       width: "100%",
       height: "100%",
@@ -53,6 +58,10 @@ export class Pane {
     });
     this.frame.add(this.view);
     this.pty = this.start(options.command);
+  }
+
+  owns(renderable: unknown): boolean {
+    return renderable === this.view;
   }
 
   get exited(): boolean {
@@ -74,9 +83,11 @@ export class Pane {
   }
 
   show(title: string, focused: boolean): void {
-    this.frame.title = ` ${title} `;
-    this.frame.borderColor = focused ? theme.accent : theme.border;
-    this.frame.titleColor = this.exited ? theme.warning : focused ? theme.accent : theme.muted;
+    if (!this.options.frameless) {
+      this.frame.title = ` ${title} `;
+      this.frame.borderColor = focused ? theme.accent : theme.border;
+      this.frame.titleColor = this.exited ? theme.warning : focused ? theme.accent : theme.muted;
+    }
     if (focused) {
       this.view.focus();
       this.scheduler.setPriority(this.pty);

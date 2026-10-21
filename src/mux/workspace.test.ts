@@ -293,6 +293,18 @@ describe("Workspace", () => {
     expect(press(workspace, "x")).toEqual([false]);
   });
 
+  test("held pane keys also work in locked mode, and its hints hide behind a popup", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    host.held.add(1);
+    press(workspace, "ctrl+g", "return");
+    expect(host.reruns).toEqual([1]);
+    host.held.add(1);
+    expect(workspace.focusedPaneHeld()).toBe(true);
+    workspace.openPopup(workspace.reservePaneId(), "Question");
+    expect(workspace.focusedPaneHeld()).toBe(false);
+  });
+
   test("resize mode grows the focused pane", () => {
     const workspace = new Workspace(new FakeHost());
     press(workspace, "ctrl+p", "r", "ctrl+n", "h", "h", "shift+h");

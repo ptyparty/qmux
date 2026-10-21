@@ -126,6 +126,8 @@ export class Pane {
   private childExited(pty: Pty, ranCommand: boolean): void {
     if (pty !== this.pty) return;
     if (!ranCommand || !this.options.holdOnExit) return this.events.onExit(this.id);
+    this.exitCode = null;
+    this.events.onHeld(this.id);
     pty.child.exited.then((code) => {
       if (pty !== this.pty) return;
       this.exitCode = code;

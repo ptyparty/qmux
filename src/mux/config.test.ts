@@ -58,6 +58,13 @@ describe("config", () => {
     });
   });
 
+  test("a focused stack member is the one the stack shows", () => {
+    let next = 1;
+    const plan = planLayout({ stack: [{}, { focus: true }] }, () => next++);
+    expect(plan.root).toEqual({ kind: "stack", panes: [1, 2], expanded: 1 });
+    expect(plan.focus).toBe(2);
+  });
+
   test("planning a layout allocates panes, honours sizes, and picks the focus", () => {
     let next = 10;
     const plan = planLayout({ row: [{ command: ["dev", "claude"], size: 2 }, { column: [{ command: ["remax"] }, { focus: true }] }] }, () => next++);

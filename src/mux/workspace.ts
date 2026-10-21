@@ -100,12 +100,12 @@ export class Workspace {
       if (binding.then) this.mode = binding.then;
       return true;
     }
-    if (this.mode === "normal" && this.host.isHeld(this.tab.focused)) return this.heldKey(key);
+    if ((this.mode === "normal" || this.mode === "locked") && this.host.isHeld(this.tab.focused)) return this.heldKey(key);
     return this.mode !== "normal" && this.mode !== "locked";
   }
 
   focusedPaneHeld(): boolean {
-    return this.host.isHeld(this.tab.focused);
+    return !this.popup && !this.prompt && this.host.isHeld(this.tab.focused);
   }
 
   private heldKey(key: InputKey): boolean {
@@ -243,7 +243,7 @@ export class Workspace {
   }
 
   private preferredAxis(tab: Tab): Axis {
-    const rect = paneRects(tab.root).get(tab.focused)!;
+    const rect = paneRects(tab.root, undefined, tab.focused).get(tab.focused)!;
     const { cols, rows } = this.host.screen();
     return rect.width * cols > rect.height * rows * 2.2 ? "row" : "column";
   }

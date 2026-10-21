@@ -34,26 +34,29 @@ export function splitPane(root: LayoutNode, target: PaneId, axis: Axis, added: P
 }
 
 export function stackPane(root: LayoutNode, target: PaneId, added: PaneId): LayoutNode {
-  const stack = stackContaining(root, target);
-  if (stack) {
-    const index = stack.panes.indexOf(target) + 1;
-    const panes = [...stack.panes.slice(0, index), added, ...stack.panes.slice(index)];
-    return replaceNode(root, stack, { kind: "stack", panes, expanded: index });
-  }
   return mapPaneParent(root, target, {
     inSplit: () => undefined,
-    atPane: (pane) => ({ kind: "stack", panes: [(pane as { id: PaneId }).id, added], expanded: 1 }),
+    atPane: (node) => {
+      if (node.kind === "pane") return { kind: "stack", panes: [node.id, added], expanded: 1 };
+      const index = node.panes.indexOf(target) + 1;
+      return { kind: "stack", panes: [...node.panes.slice(0, index), added, ...node.panes.slice(index)], expanded: index };
+    },
   });
 }
 
+export function shownMember(stack: StackNode, focused: PaneId | undefined): number {
+  const index = focused === undefined ? -1 : stack.panes.indexOf(focused);
+  return index >= 0 ? index : stack.expanded;
+}
+
 export function addToFirstStack(root: LayoutNode, added: PaneId): LayoutNode | undefined {
-  const stack = firstStack(root);
+  const stack = findStack(root, () => true);
   if (!stack) return undefined;
   return replaceNode(root, stack, { kind: "stack", panes: [...stack.panes, added], expanded: stack.panes.length });
 }
 
 export function expandPane(root: LayoutNode, target: PaneId): LayoutNode {
-  const stack = stackContaining(root, target);
+  const stack = findStack(root, (candidate) => candidate.panes.includes(target));
   if (!stack || stack.panes[stack.expanded] === target) return root;
   return replaceNode(root, stack, { ...stack, expanded: stack.panes.indexOf(target) });
 }
@@ -88,9 +91,9 @@ export function paneIds(root: LayoutNode): PaneId[] {
   }
 }
 
-export function paneRects(root: LayoutNode, rect: Rect = { x: 0, y: 0, width: 1, height: 1 }): Map<PaneId, Rect> {
+export function paneRects(root: LayoutNode, rect: Rect = { x: 0, y: 0, width: 1, height: 1 }, focused?: PaneId): Map<PaneId, Rect> {
   if (root.kind === "pane") return new Map([[root.id, rect]]);
-  if (root.kind === "stack") return stackRects(root, rect);
+  if (root.kind === "stack") return stackRects(root, rect, shownMember(root, focused));
   const rects = new Map<PaneId, Rect>();
   let offset = 0;
   for (const child of root.children) {
@@ -99,13 +102,13 @@ export function paneRects(root: LayoutNode, rect: Rect = { x: 0, y: 0, width: 1,
         ? { x: rect.x + offset * rect.width, y: rect.y, width: child.weight * rect.width, height: rect.height }
         : { x: rect.x, y: rect.y + offset * rect.height, width: rect.width, height: child.weight * rect.height };
     offset += child.weight;
-    for (const [id, paneRect] of paneRects(child.node, childRect)) rects.set(id, paneRect);
+    for (const [id, paneRect] of paneRects(child.node, childRect, focused)) rects.set(id, paneRect);
   }
   return rects;
 }
 
 export function neighbor(root: LayoutNode, from: PaneId, direction: Direction): PaneId | undefined {
-  const rects = paneRects(root);
+  const rects = paneRects(root, undefined, from);
   const origin = rects.get(from);
   if (!origin) return undefined;
   let best: { id: PaneId; overlap: number; distance: number } | undefined;
@@ -151,37 +154,31 @@ function transfer(root: LayoutNode, target: PaneId, direction: Direction, amount
   return undefined;
 }
 
-function stackRects(stack: StackNode, rect: Rect): Map<PaneId, Rect> {
+function stackRects(stack: StackNode, rect: Rect, shown: number): Map<PaneId, Rect> {
   const collapsed = Math.min(collapsedShare, 0.5 / stack.panes.length);
   const expanded = 1 - collapsed * (stack.panes.length - 1);
   const rects = new Map<PaneId, Rect>();
   let offset = 0;
   stack.panes.forEach((id, index) => {
-    const share = index === stack.expanded ? expanded : collapsed;
+    const share = index === shown ? expanded : collapsed;
     rects.set(id, { x: rect.x, y: rect.y + offset * rect.height, width: rect.width, height: share * rect.height });
     offset += share;
   });
   return rects;
 }
 
-function stackContaining(root: LayoutNode, target: PaneId): StackNode | undefined {
+function findStack(root: LayoutNode, matches: (stack: StackNode) => boolean): StackNode | undefined {
+  if (root.kind === "stack") return matches(root) ? root : undefined;
   if (root.kind === "pane") return undefined;
-  if (root.kind === "stack") return root.panes.includes(target) ? root : undefined;
   for (const child of root.children) {
-    const found = stackContaining(child.node, target);
+    const found = findStack(child.node, matches);
     if (found) return found;
   }
   return undefined;
 }
 
-function firstStack(root: LayoutNode): StackNode | undefined {
-  if (root.kind === "stack") return root;
-  if (root.kind === "pane") return undefined;
-  for (const child of root.children) {
-    const found = firstStack(child.node);
-    if (found) return found;
-  }
-  return undefined;
+function holds(node: LayoutNode, target: PaneId): boolean {
+  return (node.kind === "pane" && node.id === target) || (node.kind === "stack" && node.panes.includes(target));
 }
 
 function opposite(direction: Direction): Direction {
@@ -194,16 +191,16 @@ function normalize(children: WeightedNode[]): WeightedNode[] {
 }
 
 type SplitNode = Extract<LayoutNode, { kind: "split" }>;
+type PaneNode = Extract<LayoutNode, { kind: "pane" }>;
 export type StackNode = Extract<LayoutNode, { kind: "stack" }>;
 
 function mapPaneParent(
   root: LayoutNode,
   target: PaneId,
-  handlers: { inSplit: (split: SplitNode, index: number) => LayoutNode | undefined; atPane: (pane: LayoutNode) => LayoutNode },
+  handlers: { inSplit: (split: SplitNode, index: number) => LayoutNode | undefined; atPane: (node: PaneNode | StackNode) => LayoutNode },
 ): LayoutNode {
-  if (root.kind === "pane") return root.id === target ? handlers.atPane(root) : root;
-  if (root.kind === "stack") return root.panes.includes(target) ? handlers.atPane(root) : root;
-  const index = root.children.findIndex((child) => child.node.kind === "pane" && child.node.id === target);
+  if (root.kind !== "split") return holds(root, target) ? handlers.atPane(root) : root;
+  const index = root.children.findIndex((child) => holds(child.node, target));
   if (index >= 0) {
     const replaced = handlers.inSplit(root, index);
     if (replaced) return replaced;

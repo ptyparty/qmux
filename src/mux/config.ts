@@ -79,9 +79,10 @@ export function planLayout(spec: LayoutSpec, allocate: () => PaneId): { root: La
   let focus: PaneId | undefined;
   const build = (node: LayoutSpec): LayoutNode => {
     if ("stack" in node) {
-      const members = node.stack.map((member) => build(member) as { kind: "pane"; id: PaneId });
-      if (members.length === 1) return members[0]!;
-      return { kind: "stack", panes: members.map((member) => member.id), expanded: 0 };
+      const members = node.stack.map(addPane);
+      if (members.length === 1) return leaf(members[0]!);
+      const focused = members.findIndex((id) => id === focus);
+      return { kind: "stack", panes: members, expanded: Math.max(focused, 0) };
     }
     if ("row" in node || "column" in node) {
       const axis = "row" in node ? "row" : "column";
@@ -89,10 +90,13 @@ export function planLayout(spec: LayoutSpec, allocate: () => PaneId): { root: La
       const total = children.reduce((sum, child) => sum + (child.size ?? 1), 0);
       return { kind: "split", axis, children: children.map((child) => ({ node: build(child), weight: (child.size ?? 1) / total })) };
     }
+    return leaf(addPane(node));
+  };
+  const addPane = (node: PaneSpec): PaneId => {
     const id = allocate();
     panes.push({ id, command: node.command, name: node.name });
     if (node.focus && focus === undefined) focus = id;
-    return leaf(id);
+    return id;
   };
   const root = build(spec);
   return { root, panes, focus: focus ?? panes[0]!.id };

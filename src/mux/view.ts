@@ -1,7 +1,7 @@
 import { BoxRenderable, TextRenderable, bg, bold, fg, type CliRenderer, type StyledText } from "@opentui/core";
 import { styled, type Part } from "../ui/styled.ts";
 import { hints, modeHints, type Hint, type Mode } from "./keymap.ts";
-import { paneIds, type LayoutNode, type PaneId, type StackNode } from "./layout.ts";
+import { paneIds, shownMember, type LayoutNode, type PaneId, type StackNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { theme } from "./theme.ts";
 import type { Workspace } from "./workspace.ts";
@@ -53,7 +53,7 @@ export class MuxView {
       if (!pane) continue;
       const title = this.stackTitles.get(id);
       if (title) title.content = styled([fg(theme.muted)(` ▸ ${this.paneTitle(id, pane)}`)]);
-      else pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup);
+      pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup);
     }
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();
@@ -61,7 +61,7 @@ export class MuxView {
   }
 
   private renderBody(root: LayoutNode, zoomed: PaneId | undefined): void {
-    const signature = JSON.stringify([this.workspace.active, this.workspace.tab.id, zoomed, root]);
+    const signature = JSON.stringify([this.workspace.active, this.workspace.tab.id, this.workspace.tab.focused, zoomed, root]);
     if (signature === this.bodySignature) return;
     this.bodySignature = signature;
     for (const tab of this.workspace.tabs) {
@@ -112,10 +112,11 @@ export class MuxView {
 
   private buildStack(stack: StackNode, weight: number): BoxRenderable {
     const container = new BoxRenderable(this.renderer, { flexDirection: "column", flexGrow: weight, flexBasis: 0, minWidth: 0, minHeight: 0 });
+    const shown = shownMember(stack, this.workspace.tab.focused);
     stack.panes.forEach((id, index) => {
       const pane = this.panes.get(id);
       if (!pane) return;
-      if (index === stack.expanded) {
+      if (index === shown) {
         container.add(this.slot(pane.frame, 1));
         return;
       }
@@ -174,7 +175,7 @@ export class MuxView {
       return styled(parts);
     }
     if (message) return styled([" ", fg(theme.warning)(message)]);
-    if (mode === "normal" && this.workspace.focusedPaneHeld()) {
+    if ((mode === "normal" || mode === "locked") && this.workspace.focusedPaneHeld()) {
       return styled([" ", fg(theme.warning)("Command exited"), fg(theme.border)("  ·  "), ...hintParts(mode, heldHints).slice(1)]);
     }
     return styled(hintParts(mode));

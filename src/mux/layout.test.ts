@@ -117,6 +117,18 @@ describe("layout", () => {
       expect(root).toMatchObject({ children: [{}, { node: { kind: "split", axis: "column", children: [{ node: { kind: "stack" } }, { node: leaf(4) }] } }] });
     });
 
+    test("the focused member is shown even when the stack remembers another", () => {
+      const rects = paneRects(ide(), undefined, 3);
+      expect(rects.get(3)!.height).toBeGreaterThan(0.9);
+      expect(rects.get(2)!.height).toBeLessThan(0.1);
+      expect(neighbor(ide(), 3, "up")).toBe(2);
+    });
+
+    test("splitting a stacked pane along the parent's axis adds a sibling to that split", () => {
+      const root = splitPane(ide(), 3, "row", 4);
+      expect(root).toMatchObject({ kind: "split", axis: "row", children: [{ node: leaf(1) }, { node: { kind: "stack" } }, { node: leaf(4) }] });
+    });
+
     test("stacks resize like any other pane", () => {
       expect(paneRects(growPane(ide(), 2, "left", 0.1)).get(1)!.width).toBeCloseTo(0.4);
     });

@@ -14,7 +14,7 @@ export class MuxView {
   private readonly hintBar: TextRenderable;
   private readonly overlay: BoxRenderable;
   private bodySignature = "";
-  private readonly stackTitles = new Map<PaneId, TextRenderable>();
+  private readonly stackTitles = new Map<PaneId, BoxRenderable>();
   private readonly launcher: Launcher;
   private overlayPane: PaneId | undefined;
 
@@ -54,8 +54,8 @@ export class MuxView {
     for (const id of paneIds(tab.root)) {
       const pane = this.panes.get(id);
       if (!pane) continue;
-      const title = this.stackTitles.get(id);
-      if (title) title.content = styled([fg(theme.muted)(` ▸ ${this.paneTitle(id, pane)}`)]);
+      const folded = this.stackTitles.get(id);
+      if (folded) folded.title = ` ▸ ${this.paneTitle(id, pane)} `;
       pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
     }
     this.tabBar.content = this.renderTabs();
@@ -124,9 +124,18 @@ export class MuxView {
         container.add(this.slot(pane.frame, 1));
         return;
       }
-      const title = new TextRenderable(this.renderer, { height: 1, bg: theme.surface, onMouseDown: () => this.onFocusPane(id) });
-      this.stackTitles.set(id, title);
-      container.add(title);
+      const folded = new BoxRenderable(this.renderer, {
+        height: 1,
+        flexShrink: 0,
+        border: ["top", "left", "right"],
+        borderStyle: "rounded",
+        borderColor: theme.border,
+        titleColor: theme.muted,
+        backgroundColor: theme.background,
+        onMouseDown: () => this.onFocusPane(id),
+      });
+      this.stackTitles.set(id, folded);
+      container.add(folded);
     });
     return container;
   }

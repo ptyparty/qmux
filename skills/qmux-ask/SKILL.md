@@ -1,6 +1,6 @@
 ---
 name: qmux-ask
-description: Asks the user questions through a form that pops up in their terminal (a zellij floating pane or tmux popup) and returns the answers as JSON, via the qmux `ask`/`wait` MCP tools or the `qmux ask` CLI. Use when you need the user to make a decision, pick between options, confirm a risky action, or answer several questions at once instead of asking in chat, and when the user says "ask me", "give me a form", "popup", or "qmux".
+description: Asks the user questions through a form that pops up in their terminal (a qmux popup, a zellij floating pane, or a tmux popup) and returns the answers as JSON, via the qmux `ask`/`wait` MCP tools or the `qmux ask` CLI. Use when you need the user to make a decision, pick between options, confirm a risky action, or answer several questions at once instead of asking in chat, and when the user says "ask me", "give me a form", "popup", or "qmux".
 ---
 
 # Asking the user with qmux
@@ -22,7 +22,7 @@ qmux wait <id> --timeout 50
 qmux schema
 ```
 
-Run `qmux ask` from a shell inside the user's zellij or tmux session. It picks the host from `$ZELLIJ` or `$TMUX`. If neither is set, the result's `message` holds a command the user can run to answer.
+Run `qmux ask` from a shell inside the user's qmux, zellij, or tmux session. It picks the host from `$QMUX_SOCKET`, `$ZELLIJ`, or `$TMUX`, in that order. If none is set, the result's `message` holds a command the user can run to answer.
 
 ## Form spec
 

@@ -3,6 +3,7 @@ import { resolveHost, shellQuote, tmuxArgs, zellijArgs } from "./hosts.ts";
 
 describe("hosts", () => {
   test("auto picks the multiplexer the caller runs in", () => {
+    expect(resolveHost("auto", { QMUX_SOCKET: "/run/qmux.sock", ZELLIJ: "0" })).toBe("qmux");
     expect(resolveHost("auto", { ZELLIJ: "0" })).toBe("zellij");
     expect(resolveHost("auto", { TMUX: "/tmp/tmux-1/default,1,0" })).toBe("tmux");
     expect(resolveHost("auto", {})).toBe("none");

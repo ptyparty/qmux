@@ -12,6 +12,7 @@ import {
   type KeyEvent,
   type TextChunk,
 } from "@opentui/core";
+import { styled, type Part } from "../ui/styled.ts";
 import { FormController, type FormResult, type Focusable } from "./controller.ts";
 import { isEditing, keyHints, keyToAction, type EditorPosition } from "./keys.ts";
 import type { ChoiceElement, ConfirmElement, Element, NumberElement, TextElement } from "./schema.ts";
@@ -26,11 +27,6 @@ const palette = {
 
 type Editor = InputRenderable | TextareaRenderable;
 
-type Part = string | TextChunk;
-
-function styled(parts: Part[]): StyledText {
-  return new StyledText(parts.map((part) => (typeof part === "string" ? { __isChunk: true, text: part } : part)));
-}
 
 interface ElementView {
   readonly root: BoxRenderable;

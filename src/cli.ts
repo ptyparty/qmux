@@ -3,15 +3,19 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import { AlreadyAnsweredError, answer, ask, reopen } from "./ask/ask.ts";
 import { HostLaunchError, hostNames, type HostName } from "./ask/hosts.ts";
-import { AskStore, UnknownAskError, UnsafeAskRootError } from "./ask/store.ts";
+import { AskStore, UnknownAskError } from "./ask/store.ts";
+import { UnsafeDirectoryError } from "./private-dir.ts";
 import { formSpec, parseFormSpec, type FormSpec } from "./form/schema.ts";
 import { showForm } from "./form/show.ts";
 import { serveStdio } from "./mcp/server.ts";
+import { runMux } from "./mux/app.ts";
 
-const usage = `qmux: ask the user questions in terminal forms
+const usage = `qmux: a terminal multiplexer agents can drive
 
 Usage:
-  qmux ask [spec.json|-] [--wait] [--timeout SECONDS] [--host auto|zellij|tmux|none]
+  qmux
+      Start the multiplexer in this terminal.
+  qmux ask [spec.json|-] [--wait] [--timeout SECONDS] [--host auto|qmux|zellij|tmux|none]
       Open a form for the user and print {"id", "host", "message", "status", ...}.
       With --wait, block until the user answers (or the timeout passes).
   qmux wait ID [--timeout SECONDS]
@@ -52,6 +56,7 @@ async function main(argv: string[]): Promise<void> {
     case "mcp":
       return serveStdio();
     case undefined:
+      return runMux();
     case "help":
     case "--help":
     case "-h":
@@ -138,7 +143,7 @@ function requireId(positionals: string[]): string {
 }
 
 function isReportable(error: unknown): error is Error {
-  return [UnknownAskError, HostLaunchError, AlreadyAnsweredError, UnsafeAskRootError].some((type) => error instanceof type);
+  return [UnknownAskError, HostLaunchError, AlreadyAnsweredError, UnsafeDirectoryError].some((type) => error instanceof type);
 }
 
 function print(value: unknown): void {

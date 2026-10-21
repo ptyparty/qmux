@@ -1,4 +1,6 @@
-export const hostNames = ["auto", "zellij", "tmux", "none"] as const;
+import { ControlError, sendControl } from "../mux/control.ts";
+
+export const hostNames = ["auto", "qmux", "zellij", "tmux", "none"] as const;
 export type HostName = (typeof hostNames)[number];
 type ResolvedHost = Exclude<HostName, "auto">;
 
@@ -10,6 +12,7 @@ const launchFailureWindowMs = 300;
 
 export function resolveHost(requested: HostName, env: Record<string, string | undefined> = process.env): ResolvedHost {
   if (requested !== "auto") return requested;
+  if (env.QMUX_SOCKET !== undefined) return "qmux";
   if (env.ZELLIJ !== undefined || env.ZELLIJ_SESSION_NAME !== undefined) return "zellij";
   if (env.TMUX !== undefined) return "tmux";
   return "none";
@@ -27,6 +30,9 @@ export function formCommand(askId: string, asksDir: string): string[] {
 export async function launchForm(host: ResolvedHost, askId: string, title: string, asksDir: string): Promise<Launch> {
   const command = formCommand(askId, asksDir);
   switch (host) {
+    case "qmux":
+      await openQmuxPopup(command, title);
+      return { host, message: "Opened a popup in qmux" };
     case "zellij":
       await runChecked(zellijArgs(command, title));
       return { host, message: "Opened a floating pane in the current zellij session" };
@@ -54,6 +60,18 @@ export function tmuxArgs(command: string[], title: string): string[] {
 
 export function shellQuote(args: string[]): string {
   return args.map((arg) => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`)).join(" ");
+}
+
+async function openQmuxPopup(command: string[], title: string): Promise<void> {
+  const socket = process.env.QMUX_SOCKET;
+  if (!socket) throw new HostLaunchError("QMUX_SOCKET is not set; run this from a qmux pane");
+  try {
+    const response = await sendControl(socket, { method: "popup.open", params: { title, command } });
+    if (!response.ok) throw new HostLaunchError(`qmux refused the popup: ${response.error}`);
+  } catch (error) {
+    if (error instanceof ControlError) throw new HostLaunchError(error.message);
+    throw error;
+  }
 }
 
 async function spawnPopup(args: string[]): Promise<void> {

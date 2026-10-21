@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, linkSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { ensurePrivateDir, runtimeDir } from "../private-dir.ts";
 import type { FormResult } from "../form/controller.ts";
 import { parseFormSpec, type FormSpec } from "../form/schema.ts";
 
@@ -18,18 +18,14 @@ export class UnknownAskError extends Error {
   }
 }
 
-export class UnsafeAskRootError extends Error {}
-
 export function defaultAskRoot(): string {
   if (process.env.QMUX_STATE_DIR) return join(process.env.QMUX_STATE_DIR, "asks");
-  const runtime = process.env.XDG_RUNTIME_DIR ?? join(tmpdir(), `qmux-${process.getuid?.() ?? "user"}`);
-  return join(runtime, "qmux", "asks");
+  return join(runtimeDir(), "asks");
 }
 
 export class AskStore {
   constructor(readonly root: string = defaultAskRoot()) {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
-    assertPrivate(root);
+    ensurePrivateDir(root);
   }
 
   async create(spec: FormSpec, host: string): Promise<AskMeta> {
@@ -107,24 +103,5 @@ export class AskStore {
 
   private dir(id: string): string {
     return join(this.root, id);
-  }
-}
-
-function assertPrivate(root: string): void {
-  const uid = process.getuid?.();
-  if (uid === undefined) return;
-  const stats = statSync(root);
-  if (stats.uid !== uid || (stats.mode & 0o077) !== 0) {
-    throw new UnsafeAskRootError(`${root} must be a directory owned by you with no group or other permissions (chmod 700)`);
-  }
-  for (let dir = dirname(root); dir !== dirname(dir); dir = dirname(dir)) assertTrustedAncestor(dir, uid);
-}
-
-function assertTrustedAncestor(dir: string, uid: number): void {
-  const stats = statSync(dir);
-  const ownedByOther = stats.uid !== uid && stats.uid !== 0;
-  const writableByOthers = (stats.mode & 0o002) !== 0 && (stats.mode & 0o1000) === 0;
-  if (ownedByOther || writableByOthers) {
-    throw new UnsafeAskRootError(`${dir} is controlled by another user, so asks stored beneath it are not private`);
   }
 }

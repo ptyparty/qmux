@@ -9,7 +9,7 @@ import { formSpec } from "../form/schema.ts";
 
 const defaultWaitSeconds = 50;
 
-const askDescription = `Ask the user questions in a form that pops up in their terminal (a floating pane in zellij or a popup in tmux), and get their answers back as JSON.
+const askDescription = `Ask the user questions in a form that pops up in their terminal (a popup in qmux, a floating pane in zellij, or a popup in tmux), and get their answers back as JSON.
 
 Use it when you need a decision, a choice between options, or several answers at once. It is quicker for the user than typing replies in chat. Element types: text, confirm (yes/no), choice (single or multi, with an automatic "Other" free-text option), number (bounded), and note (display-only text). Use \`when\` to show an element only when an earlier answer calls for it.
 
@@ -26,7 +26,7 @@ export function createServer(store: AskStore = new AskStore()): McpServer {
       inputSchema: {
         form: formSpec,
         wait_seconds: z.number().min(0).max(600).default(defaultWaitSeconds).describe("How long to wait for an answer before returning pending"),
-        host: z.enum(hostNames).default("auto").describe("Where to show the form; auto detects zellij or tmux"),
+        host: z.enum(hostNames).default("auto").describe("Where to show the form; auto detects qmux, zellij, or tmux"),
       },
     },
     async ({ form, wait_seconds, host }) => {

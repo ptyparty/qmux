@@ -1,0 +1,24 @@
+import { createCliRenderer, EmbeddedTerminalRenderable } from "@opentui/core";
+import { appendFileSync } from "node:fs";
+import { grid, Pane } from "./pane.ts";
+import { ReadScheduler } from "../src/mux/pty.ts";
+import { busyWorkloads, echoPane, ensureBigFile } from "./workloads.ts";
+const stats = { bytes: 0, calls: 0, writeMs: 0 };
+const original = EmbeddedTerminalRenderable.prototype.write;
+EmbeddedTerminalRenderable.prototype.write = function (data) {
+  const t = performance.now(); original.call(this, data); stats.writeMs += performance.now() - t;
+  stats.calls++; stats.bytes += typeof data === "string" ? data.length : data.length;
+};
+const bigFile = await ensureBigFile("/tmp/qmux-bench-big.txt");
+const renderer = await createCliRenderer({ exitOnCtrlC: false, targetFps: 60, maxFps: 60, gatherStats: true });
+const scheduler = new ReadScheduler(6, 16);
+const panes = [echoPane, ...busyWorkloads(15, bigFile)].map((w) => new Pane(renderer, w.command, w.title, scheduler));
+renderer.root.add(grid(renderer, panes, 4));
+await Bun.sleep(3000);
+Object.assign(stats, { bytes: 0, calls: 0, writeMs: 0 });
+const t0 = performance.now();
+await Bun.sleep(5000);
+const secs = (performance.now() - t0) / 1000;
+const s = renderer.getStats?.() as any;
+appendFileSync("/tmp/claude.qxjit/profile.txt", JSON.stringify({ MBps: +(stats.bytes / secs / 1e6).toFixed(1), callsPerSec: Math.round(stats.calls / secs), avgChunk: Math.round(stats.bytes / stats.calls), writeShare: +(stats.writeMs / (secs * 1000)).toFixed(2), fps: s?.fps, avgFrameMs: s?.averageFrameTime, maxFrameMs: s?.maxFrameTime }) + "\n");
+for (const p of panes) p.kill(); renderer.destroy(); process.exit(0);

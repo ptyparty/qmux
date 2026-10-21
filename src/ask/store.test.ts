@@ -3,7 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseFormSpec } from "../form/schema.ts";
-import { AskStore, UnknownAskError, UnsafeAskRootError } from "./store.ts";
+import { UnsafeDirectoryError } from "../private-dir.ts";
+import { AskStore, UnknownAskError } from "./store.ts";
 
 const spec = parseFormSpec({ title: "Pick", elements: [{ type: "confirm", id: "ok", label: "OK?" }] });
 
@@ -68,6 +69,6 @@ describe("AskStore", () => {
 
   test("refuses a root that others can access", () => {
     chmodSync(root, 0o777);
-    expect(() => new AskStore(root)).toThrow(UnsafeAskRootError);
+    expect(() => new AskStore(root)).toThrow(UnsafeDirectoryError);
   });
 });

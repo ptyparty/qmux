@@ -7,6 +7,10 @@ export const controlRequest = z.discriminatedUnion("method", [
     params: z.object({ title: z.string(), command: z.array(z.string()).min(1), paneId: z.number().int().optional() }),
   }),
   z.object({ method: z.literal("project.open"), params: z.object({ target: z.string().min(1) }) }),
+  z.object({
+    method: z.literal("agent.state"),
+    params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional() }),
+  }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),
 ]);

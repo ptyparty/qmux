@@ -334,6 +334,55 @@ describe("Workspace", () => {
     expect(workspace.focusedPaneHeld()).toBe(false);
   });
 
+  describe("agent states", () => {
+    function twoTabs(): Workspace {
+      const workspace = new Workspace(new FakeHost());
+      press(workspace, "ctrl+p", "r", "ctrl+t", "c");
+      return workspace;
+    }
+
+    test("states roll up to the tab and only unseen changes notify", () => {
+      const workspace = twoTabs();
+      expect(workspace.setAgentState(1, "working")).toBe(false);
+      expect(workspace.tabAttention(workspace.tabs[0]!)).toBe("working");
+      expect(workspace.setAgentState(2, "waiting")).toBe(true);
+      expect(workspace.setAgentState(2, "waiting")).toBe(false);
+      expect(workspace.tabAttention(workspace.tabs[0]!)).toBe("waiting");
+      expect(workspace.setAgentState(3, "done")).toBe(false);
+      expect(workspace.agents.has(3)).toBe(false);
+      expect(workspace.setAgentState(99, "done")).toBe(false);
+    });
+
+    test("Alt+a jumps to waiting agents first, then done ones, and focusing clears done", () => {
+      const workspace = twoTabs();
+      workspace.setAgentState(1, "done");
+      workspace.setAgentState(2, "waiting");
+      press(workspace, "alt+a");
+      expect([workspace.active, workspace.tab.focused]).toEqual([0, 2]);
+      workspace.setAgentState(2, undefined);
+      press(workspace, "alt+a");
+      expect([workspace.active, workspace.tab.focused]).toEqual([0, 1]);
+      expect(workspace.agents.has(1)).toBe(false);
+      press(workspace, "alt+a");
+      expect(workspace.message).toBe("No agent needs you");
+    });
+
+    test("typing into a waiting agent's pane means it is being answered", () => {
+      const workspace = twoTabs();
+      press(workspace, "ctrl+t", "h", "escape");
+      workspace.setAgentState(2, "waiting");
+      press(workspace, "y");
+      expect(workspace.agents.get(2)).toBe("working");
+    });
+
+    test("an exiting pane forgets its state", () => {
+      const workspace = twoTabs();
+      workspace.setAgentState(2, "waiting");
+      workspace.paneExited(2);
+      expect(workspace.agents.has(2)).toBe(false);
+    });
+  });
+
   test("resize mode grows the focused pane", () => {
     const workspace = new Workspace(new FakeHost());
     press(workspace, "ctrl+p", "r", "ctrl+n", "h", "h", "shift+h");

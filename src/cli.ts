@@ -6,11 +6,8 @@ import { HostLaunchError, hostNames, type HostName } from "./ask/hosts.ts";
 import { AskStore, UnknownAskError } from "./ask/store.ts";
 import { UnsafeDirectoryError } from "./private-dir.ts";
 import { formSpec, parseFormSpec, type FormSpec } from "./form/schema.ts";
-import { showForm } from "./form/show.ts";
-import { serveStdio } from "./mcp/server.ts";
+import { runHook } from "./hooks/hook.ts";
 import { sendControl } from "./mux/control.ts";
-import { attachSession } from "./mux/session/client.ts";
-import { runServer } from "./mux/session/server.ts";
 import { defaultSessionName, listSessions, quitSession, SessionError } from "./mux/session/sessions.ts";
 
 const usage = `qmux: a terminal multiplexer agents can drive
@@ -43,6 +40,9 @@ Usage:
       Print the JSON Schema for form specs.
   qmux mcp
       Run the MCP server on stdio.
+  qmux hook
+      Claude Code hook: reads the hook's JSON on stdin and reports the agent's state to qmux.
+      Permission requests become a popup in the agent's tab. Does nothing outside qmux.
 
 Results are JSON: {"status":"submitted","values":{...}}, {"status":"cancelled"}, or {"status":"pending"}.`;
 
@@ -64,11 +64,13 @@ async function main(argv: string[]): Promise<void> {
     case "schema":
       return print(z.toJSONSchema(formSpec));
     case "mcp":
-      return serveStdio();
+      return (await import("./mcp/server.ts")).serveStdio();
+    case "hook":
+      return hookCommand();
     case undefined:
-      return attachSession(defaultSessionName);
+      return (await import("./mux/session/client.ts")).attachSession(defaultSessionName);
     case "attach":
-      return attachSession(rest[0] ?? defaultSessionName);
+      return (await import("./mux/session/client.ts")).attachSession(rest[0] ?? defaultSessionName);
     case "ls":
       return listCommand();
     case "kill":
@@ -76,7 +78,7 @@ async function main(argv: string[]): Promise<void> {
     case "project":
       return projectCommand(rest);
     case "server":
-      return runServer(requireName(rest));
+      return (await import("./mux/session/server.ts")).runServer(requireName(rest));
     case "help":
     case "--help":
     case "-h":
@@ -122,7 +124,7 @@ async function formCommand(args: string[]): Promise<void> {
   if (source === undefined || source === "-") {
     throw new UsageError("qmux form needs a spec file; stdin is reserved for the keyboard");
   }
-  print(await showForm(await readSpec(source), async () => {}));
+  print(await (await import("./form/show.ts")).showForm(await readSpec(source), async () => {}));
 }
 
 function parse<T extends NonNullable<Parameters<typeof parseArgs>[0]>["options"]>(args: string[], options: T) {
@@ -160,6 +162,16 @@ function requireId(positionals: string[]): string {
   const [id] = positionals;
   if (!id) throw new UsageError("missing ask id");
   return id;
+}
+
+async function hookCommand(): Promise<void> {
+  try {
+    const output = await runHook(await Bun.stdin.text(), process.env);
+    if (output) console.log(output);
+  } catch (error) {
+    console.error(`qmux hook: ${(error as Error).message}`);
+  }
+  process.exit(0);
 }
 
 async function projectCommand(args: string[]): Promise<void> {

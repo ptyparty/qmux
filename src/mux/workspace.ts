@@ -7,6 +7,11 @@ export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId;
 
 export type Popup = { id: PaneId; title: string; tabId: number };
 
+export const agentStates = ["working", "waiting", "done"] as const;
+export type AgentState = (typeof agentStates)[number];
+
+const urgency: Record<AgentState, number> = { waiting: 3, done: 2, working: 1 };
+
 export type Prompt = {
   kind: "rename-tab" | "rename-pane" | "close-tab" | "open-project";
   title: string;
@@ -46,6 +51,7 @@ export class Workspace {
   clients = 1;
   readonly paneNames = new Map<PaneId, string>();
   readonly popups: Popup[] = [];
+  readonly agents = new Map<PaneId, AgentState>();
   private nextPaneId = 1;
   private nextTabNumber = 1;
 
@@ -93,10 +99,57 @@ export class Workspace {
 
   private expandFocused(): void {
     for (const tab of this.tabs) tab.root = expandPane(tab.root, tab.focused);
+    const focused = this.tabs[this.active]?.focused;
+    if (focused !== undefined && this.agents.get(focused) === "done") this.agents.delete(focused);
+  }
+
+  setAgentState(id: PaneId, state: AgentState | undefined): boolean {
+    if (!this.tabs.some((tab) => paneIds(tab.root).includes(id))) return false;
+    if (state === undefined) {
+      this.agents.delete(id);
+      return false;
+    }
+    const watching = id === this.tab.focused;
+    if (state === "done" && watching) {
+      this.agents.delete(id);
+      return false;
+    }
+    const changed = this.agents.get(id) !== state;
+    this.agents.set(id, state);
+    return changed && !watching && state !== "working";
+  }
+
+  tabAttention(tab: Tab): AgentState | undefined {
+    let most: AgentState | undefined;
+    for (const id of paneIds(tab.root)) {
+      const state = this.agents.get(id);
+      if (state && (!most || urgency[state] > urgency[most])) most = state;
+    }
+    return most;
+  }
+
+  private jumpToAttention(): void {
+    const order = this.tabs.flatMap((tab, index) => paneIds(tab.root).map((id) => ({ index, id })));
+    const start = order.findIndex((entry) => entry.index === this.active && entry.id === this.tab.focused);
+    const rotated = [...order.slice(start + 1), ...order.slice(0, start + 1)];
+    const target =
+      rotated.find((entry) => this.agents.get(entry.id) === "waiting") ?? rotated.find((entry) => this.agents.get(entry.id) === "done");
+    if (!target) {
+      this.message = "No agent needs you";
+      return;
+    }
+    this.active = target.index;
+    this.tab.focused = target.id;
   }
 
   private dispatchKey(key: InputKey): boolean {
     this.message = undefined;
+    const consumed = this.routeKey(key);
+    if (!consumed && !this.popup && this.agents.get(this.tab.focused) === "waiting") this.agents.set(this.tab.focused, "working");
+    return consumed;
+  }
+
+  private routeKey(key: InputKey): boolean {
     if (this.popup && this.mode === "normal" && !popupPassthrough.has(keyName(key))) return false;
     if (this.prompt) {
       this.editPrompt(key);
@@ -158,6 +211,7 @@ export class Workspace {
     const index = this.tabs.findIndex((tab) => paneIds(tab.root).includes(id));
     if (index < 0) return;
     this.paneNames.delete(id);
+    this.agents.delete(id);
     const tab = this.tabs[index]!;
     const root = removePane(tab.root, id);
     if (root === null) return this.removeTab(index);
@@ -224,6 +278,8 @@ export class Workspace {
       case "detach":
         this.detachRequested = true;
         return;
+      case "next-attention":
+        return this.jumpToAttention();
       case "close-popup":
         if (this.popup) this.host.closePopup(this.popup.id);
         else this.message = "No popup is open";

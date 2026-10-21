@@ -1,5 +1,4 @@
 import type { FormSpec } from "../form/schema.ts";
-import { showForm } from "../form/show.ts";
 import { launchForm, resolveHost, type HostName, type Launch } from "./hosts.ts";
 import type { AskStatus, AskStore } from "./store.ts";
 
@@ -31,6 +30,7 @@ export async function reopen(store: AskStore, id: string, host: HostName): Promi
 export async function answer(store: AskStore, id: string): Promise<AskStatus> {
   const existing = await store.status(id);
   if (existing.status !== "pending") return notice(`This question was already ${existing.status}.`, existing);
+  const { showForm } = await import("../form/show.ts");
   const result = await showForm(await store.spec(id), () => store.complete(id, { status: "cancelled" }));
   if (await store.complete(id, result)) return result;
   const recorded = await store.status(id);

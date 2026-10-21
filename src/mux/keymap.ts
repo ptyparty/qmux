@@ -21,6 +21,7 @@ export type Command =
   | { type: "resize"; direction: Direction; shrink: boolean }
   | { type: "detach" }
   | { type: "close-popup" }
+  | { type: "next-attention" }
   | { type: "quit" };
 
 export type Binding = { keys: string[]; command: Command; then?: Mode };
@@ -59,10 +60,12 @@ export const keymap: Record<Mode, ModeKeys> = {
       ...directional(dvorak, "alt+", (direction) => ({ type: "focus", direction })),
       { keys: ["alt+o"], command: { type: "cycle-pane", delta: -1 } },
       { keys: ["alt+e"], command: { type: "cycle-pane", delta: 1 } },
+      { keys: ["alt+a"], command: { type: "next-attention" } },
     ],
     hints: [
       { keys: "Alt h/t/n/s", description: "focus" },
       { keys: "Alt o/e", description: "prev/next pane" },
+      { keys: "Alt a", description: "next agent needing you" },
     ],
   },
   locked: {

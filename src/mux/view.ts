@@ -5,7 +5,7 @@ import { Launcher } from "./launcher.ts";
 import { paneIds, shownMember, type LayoutNode, type PaneId, type StackNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { theme } from "./theme.ts";
-import type { Workspace } from "./workspace.ts";
+import type { AgentState, Workspace } from "./workspace.ts";
 
 export class MuxView {
   private readonly tabBar: TextRenderable;
@@ -139,7 +139,9 @@ export class MuxView {
 
   private paneTitle(id: PaneId, pane: Pane): string {
     const zoomed = this.workspace.tab.zoomed && id === this.workspace.tab.focused ? " (zoomed)" : "";
-    return `${pane.label(this.workspace.paneNames.get(id))}${zoomed}`;
+    const state = this.workspace.agents.get(id);
+    const badge = state ? `${agentBadges[state]} ${agentLabels[state]} · ` : "";
+    return `${badge}${pane.label(this.workspace.paneNames.get(id))}${zoomed}`;
   }
 
   private renderTabs(): StyledText {
@@ -147,7 +149,9 @@ export class MuxView {
     this.workspace.tabs.forEach((tab, index) => {
       const asking = this.workspace.popupsWaiting(tab) > 0 ? " ?" : "";
       const label = ` ${index + 1} ${tab.name}${asking} `;
-      parts.push(index === this.workspace.active ? bold(bg(theme.accent)(fg(theme.background)(label))) : fg(theme.muted)(label), " ");
+      parts.push(index === this.workspace.active ? bold(bg(theme.accent)(fg(theme.background)(label))) : fg(theme.muted)(label));
+      const attention = this.workspace.tabAttention(tab);
+      parts.push(attention ? bold(fg(agentColors[attention])(`${agentBadges[attention]} `)) : " ");
     });
     if (this.workspace.clients > 1) parts.push(fg(theme.warning)(` ${this.workspace.clients} terminals attached `));
     return styled(parts);
@@ -176,6 +180,10 @@ export class MuxView {
     return styled(hintParts(mode));
   }
 }
+
+const agentBadges: Record<AgentState, string> = { working: "●", waiting: "!", done: "✓" };
+const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done" };
+const agentColors: Record<AgentState, string> = { working: theme.accent, waiting: theme.warning, done: theme.modes.normal };
 
 const heldHints: Hint[] = [
   { keys: "Enter", description: "re-run" },

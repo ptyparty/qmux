@@ -49,6 +49,23 @@ Each ask is stored as a directory under `$XDG_RUNTIME_DIR/qmux/asks/<id>/`. Set 
 - **Lifecycle:** closing the form's pane records a cancel. Asks older than a day are deleted.
 - **No daemon:** `ask`, `wait`, the MCP server, and the form process share state only through these files.
 
+## Claude Code hooks
+
+`qmux hook` lets Claude Code sessions running in qmux panes report what they are doing. Point these hook events at it in `~/.claude/settings.json`: `UserPromptSubmit`, `Stop`, `SessionEnd`, `Notification` (matcher `*`) and `PermissionRequest` (matcher `*`, with a long timeout such as 3600 seconds). Use absolute paths, since hooks may not have `~/.bun/bin` on their PATH:
+
+```json
+{ "type": "command", "command": "/home/you/.bun/bin/bun /home/you/.bun/bin/qmux hook" }
+```
+
+With the hooks in place:
+
+- **Badges:** pane titles and tabs show `●` working, `!` needs you, and `✓` done.
+- **Alt+a** jumps to the next agent that needs you, then to finished ones. Looking at a finished pane clears its `✓`.
+- **Notifications:** an agent that needs you or finishes in a pane you are not looking at sends a terminal notification.
+- **Permission popups:** a permission request opens a popup in the agent's tab with Allow once, Always allow and Deny. Esc hands the question back to Claude's own prompt.
+
+Outside qmux, `qmux hook` exits at once and does nothing.
+
 ## Development
 
 ```bash

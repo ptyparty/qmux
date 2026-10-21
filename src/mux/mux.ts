@@ -133,6 +133,16 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return { ok: true };
         case "session.info":
           return { ok: true, result: { session: options.session, tabs: workspace.tabs.length, panes: panes.size } };
+        case "agent.state": {
+          const { paneId, state, detail } = request.params;
+          const notify = workspace.setAgentState(paneId, state === "clear" ? undefined : state);
+          if (notify) {
+            const where = workspace.tabs.find((tab) => paneIds(tab.root).includes(paneId))?.name ?? "qmux";
+            renderer.triggerNotification(detail ?? (state === "waiting" ? "An agent needs you" : "An agent finished"), where);
+          }
+          refresh();
+          return { ok: true };
+        }
         case "project.open": {
           const error = workspace.openProject(request.params.target);
           refresh();

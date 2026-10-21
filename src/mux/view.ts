@@ -148,11 +148,13 @@ export class MuxView {
   private renderTabs(): StyledText {
     const parts: Part[] = [bold(fg(theme.accent)(" qmux "))];
     this.workspace.tabs.forEach((tab, index) => {
+      const active = index === this.workspace.active;
       const asking = this.workspace.popupsWaiting(tab) > 0 ? " ?" : "";
-      const label = ` ${index + 1} ${tab.name}${asking} `;
-      parts.push(index === this.workspace.active ? bold(bg(theme.accent)(fg(theme.background)(label))) : fg(theme.muted)(label));
       const attention = this.workspace.tabAttention(tab);
-      parts.push(attention ? bold(fg(agentColors[attention])(`${agentBadges[attention]} `)) : " ");
+      const paint = (text: string, color: string) => (active ? bold(bg(theme.accent)(fg(theme.background)(text))) : fg(color)(text));
+      parts.push(paint(` ${index + 1} ${tab.name}${asking}`, theme.muted));
+      if (attention) parts.push(paint(` ${agentBadges[attention]}`, agentColors[attention]));
+      parts.push(paint(" ", theme.muted), " ");
     });
     if (this.workspace.clients > 1) parts.push(fg(theme.warning)(` ${this.workspace.clients} terminals attached `));
     return styled(parts);

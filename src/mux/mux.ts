@@ -48,8 +48,9 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     view?.render();
   };
 
-  const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void) => {
-    panes.set(id, new Pane(renderer, id, { cwd, command, env: paneEnv }, scheduler, {
+  const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, holdOnExit = false) => {
+    panes.set(id, new Pane(renderer, id, { cwd, command, env: paneEnv, holdOnExit }, scheduler, {
+      onHeld: () => refresh(),
       onExit: (exited) => {
         panes.get(exited)?.destroy();
         panes.delete(exited);
@@ -64,7 +65,10 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   };
 
   const host: PaneHost = {
-    create: (id, cwd, command) => spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited)),
+    create: (id, cwd, command) => spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), true),
+    isHeld: (id) => panes.get(id)?.exited ?? false,
+    rerun: (id) => panes.get(id)?.rerun(),
+    replaceWithShell: (id) => panes.get(id)?.replaceWithShell(),
     projects: () => findProjects(options.config.projects.roots),
     destroy: (id) => {
       panes.get(id)?.destroy();
@@ -77,7 +81,10 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
 
   const workspace = new Workspace(host, process.cwd(), options.config);
   workspace.message = options.configError;
-  view = new MuxView(renderer, workspace, panes);
+  view = new MuxView(renderer, workspace, panes, (id) => {
+    workspace.focusPane(id);
+    refresh();
+  });
   view.render();
 
   const openPopup = (title: string, command: string[]) => {

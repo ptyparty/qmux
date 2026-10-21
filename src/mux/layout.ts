@@ -4,7 +4,8 @@ export type Direction = "left" | "right" | "up" | "down";
 
 export type LayoutNode =
   | { kind: "pane"; id: PaneId }
-  | { kind: "split"; axis: Axis; children: WeightedNode[] };
+  | { kind: "split"; axis: Axis; children: WeightedNode[] }
+  | { kind: "stack"; panes: PaneId[]; expanded: number };
 
 export type WeightedNode = { node: LayoutNode; weight: number };
 
@@ -12,6 +13,7 @@ export type Rect = { x: number; y: number; width: number; height: number };
 
 const epsilon = 1e-9;
 const minimumWeight = 0.05;
+const collapsedShare = 0.02;
 
 export function leaf(id: PaneId): LayoutNode {
   return { kind: "pane", id };
@@ -31,8 +33,42 @@ export function splitPane(root: LayoutNode, target: PaneId, axis: Axis, added: P
   });
 }
 
+export function stackPane(root: LayoutNode, target: PaneId, added: PaneId): LayoutNode {
+  const stack = stackContaining(root, target);
+  if (stack) {
+    const index = stack.panes.indexOf(target) + 1;
+    const panes = [...stack.panes.slice(0, index), added, ...stack.panes.slice(index)];
+    return replaceNode(root, stack, { kind: "stack", panes, expanded: index });
+  }
+  return mapPaneParent(root, target, {
+    inSplit: () => undefined,
+    atPane: (pane) => ({ kind: "stack", panes: [(pane as { id: PaneId }).id, added], expanded: 1 }),
+  });
+}
+
+export function addToFirstStack(root: LayoutNode, added: PaneId): LayoutNode | undefined {
+  const stack = firstStack(root);
+  if (!stack) return undefined;
+  return replaceNode(root, stack, { kind: "stack", panes: [...stack.panes, added], expanded: stack.panes.length });
+}
+
+export function expandPane(root: LayoutNode, target: PaneId): LayoutNode {
+  const stack = stackContaining(root, target);
+  if (!stack || stack.panes[stack.expanded] === target) return root;
+  return replaceNode(root, stack, { ...stack, expanded: stack.panes.indexOf(target) });
+}
+
 export function removePane(root: LayoutNode, target: PaneId): LayoutNode | null {
   if (root.kind === "pane") return root.id === target ? null : root;
+  if (root.kind === "stack") {
+    const index = root.panes.indexOf(target);
+    if (index < 0) return root;
+    const panes = root.panes.filter((id) => id !== target);
+    if (panes.length === 0) return null;
+    if (panes.length === 1) return leaf(panes[0]!);
+    const expanded = index < root.expanded ? root.expanded - 1 : Math.min(root.expanded, panes.length - 1);
+    return { kind: "stack", panes, expanded };
+  }
   const children = root.children
     .map((child) => ({ ...child, node: removePane(child.node, target) }))
     .filter((child): child is WeightedNode => child.node !== null);
@@ -42,11 +78,19 @@ export function removePane(root: LayoutNode, target: PaneId): LayoutNode | null 
 }
 
 export function paneIds(root: LayoutNode): PaneId[] {
-  return root.kind === "pane" ? [root.id] : root.children.flatMap((child) => paneIds(child.node));
+  switch (root.kind) {
+    case "pane":
+      return [root.id];
+    case "stack":
+      return root.panes;
+    case "split":
+      return root.children.flatMap((child) => paneIds(child.node));
+  }
 }
 
 export function paneRects(root: LayoutNode, rect: Rect = { x: 0, y: 0, width: 1, height: 1 }): Map<PaneId, Rect> {
   if (root.kind === "pane") return new Map([[root.id, rect]]);
+  if (root.kind === "stack") return stackRects(root, rect);
   const rects = new Map<PaneId, Rect>();
   let offset = 0;
   for (const child of root.children) {
@@ -107,6 +151,39 @@ function transfer(root: LayoutNode, target: PaneId, direction: Direction, amount
   return undefined;
 }
 
+function stackRects(stack: StackNode, rect: Rect): Map<PaneId, Rect> {
+  const collapsed = Math.min(collapsedShare, 0.5 / stack.panes.length);
+  const expanded = 1 - collapsed * (stack.panes.length - 1);
+  const rects = new Map<PaneId, Rect>();
+  let offset = 0;
+  stack.panes.forEach((id, index) => {
+    const share = index === stack.expanded ? expanded : collapsed;
+    rects.set(id, { x: rect.x, y: rect.y + offset * rect.height, width: rect.width, height: share * rect.height });
+    offset += share;
+  });
+  return rects;
+}
+
+function stackContaining(root: LayoutNode, target: PaneId): StackNode | undefined {
+  if (root.kind === "pane") return undefined;
+  if (root.kind === "stack") return root.panes.includes(target) ? root : undefined;
+  for (const child of root.children) {
+    const found = stackContaining(child.node, target);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function firstStack(root: LayoutNode): StackNode | undefined {
+  if (root.kind === "stack") return root;
+  if (root.kind === "pane") return undefined;
+  for (const child of root.children) {
+    const found = firstStack(child.node);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 function opposite(direction: Direction): Direction {
   return ({ left: "right", right: "left", up: "down", down: "up" } as const)[direction];
 }
@@ -117,6 +194,7 @@ function normalize(children: WeightedNode[]): WeightedNode[] {
 }
 
 type SplitNode = Extract<LayoutNode, { kind: "split" }>;
+export type StackNode = Extract<LayoutNode, { kind: "stack" }>;
 
 function mapPaneParent(
   root: LayoutNode,
@@ -124,6 +202,7 @@ function mapPaneParent(
   handlers: { inSplit: (split: SplitNode, index: number) => LayoutNode | undefined; atPane: (pane: LayoutNode) => LayoutNode },
 ): LayoutNode {
   if (root.kind === "pane") return root.id === target ? handlers.atPane(root) : root;
+  if (root.kind === "stack") return root.panes.includes(target) ? handlers.atPane(root) : root;
   const index = root.children.findIndex((child) => child.node.kind === "pane" && child.node.id === target);
   if (index >= 0) {
     const replaced = handlers.inSplit(root, index);
@@ -133,7 +212,7 @@ function mapPaneParent(
 }
 
 function pathTo(root: LayoutNode, target: PaneId): { split: SplitNode; index: number }[] {
-  if (root.kind === "pane") return [];
+  if (root.kind !== "split") return [];
   for (const [index, child] of root.children.entries()) {
     if (!paneIds(child.node).includes(target)) continue;
     return [{ split: root, index }, ...pathTo(child.node, target)];
@@ -143,7 +222,7 @@ function pathTo(root: LayoutNode, target: PaneId): { split: SplitNode; index: nu
 
 function replaceNode(root: LayoutNode, from: LayoutNode, to: LayoutNode): LayoutNode {
   if (root === from) return to;
-  if (root.kind === "pane") return root;
+  if (root.kind !== "split") return root;
   return { ...root, children: root.children.map((child) => ({ ...child, node: replaceNode(child.node, from, to) })) };
 }
 

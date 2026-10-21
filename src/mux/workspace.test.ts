@@ -23,6 +23,20 @@ class FakeHost implements PaneHost {
   destroy(id: number): void {
     this.destroyed.push(id);
   }
+  held = new Set<number>();
+  reruns: number[] = [];
+  shells: number[] = [];
+  isHeld(id: number): boolean {
+    return this.held.has(id);
+  }
+  rerun(id: number): void {
+    this.reruns.push(id);
+    this.held.delete(id);
+  }
+  replaceWithShell(id: number): void {
+    this.shells.push(id);
+    this.held.delete(id);
+  }
   closedPopups: number[] = [];
   closePopup(id: number): void {
     this.closedPopups.push(id);
@@ -234,6 +248,23 @@ describe("Workspace", () => {
     expect([host.commands.get(2), host.commands.get(3), host.commands.get(4)]).toEqual([["dev", "claude"], ["remax"], undefined]);
   });
 
+  test("stacks: new panes join the stack, focus expands members, s stacks onto the focused pane", () => {
+    const config = configSchema.parse({
+      projects: { layout: "ide" },
+      layouts: { ide: { row: [{ focus: true }, { stack: [{ command: ["remax"] }, {}] }] } },
+    });
+    const workspace = new Workspace(new FakeHost(), "/home", config);
+    workspace.openProject("merlin");
+    expect(workspace.tab.root).toMatchObject({ children: [{ node: { id: 2 } }, { node: { kind: "stack", panes: [3, 4], expanded: 0 } }] });
+    press(workspace, "alt+s", "alt+n");
+    expect(workspace.tab.focused).toBe(4);
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { expanded: 1 } }] });
+    press(workspace, "ctrl+p", "n");
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { panes: [3, 4, 5], expanded: 2 } }] });
+    press(workspace, "alt+h", "ctrl+p", "s");
+    expect(workspace.tab.root).toMatchObject({ children: [{ node: { kind: "stack", panes: [2, 6], expanded: 1 } }, {}] });
+  });
+
   test("opening a project that already has a tab switches to it", () => {
     const workspace = new Workspace(new FakeHost());
     expect(workspace.openProject("merlin")).toBeUndefined();
@@ -242,6 +273,24 @@ describe("Workspace", () => {
     expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "merlin"]);
     expect(workspace.active).toBe(1);
     expect(workspace.openProject("nothing-like-it")).toBe('No project matches "nothing-like-it"');
+  });
+
+  test("a held pane re-runs on Enter, becomes a shell on Esc, and closes on Ctrl+c", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    press(workspace, "ctrl+p", "r");
+    host.held.add(2);
+    expect(press(workspace, "x", "return")).toEqual([true, true]);
+    expect(host.reruns).toEqual([2]);
+    host.held.add(2);
+    press(workspace, "escape");
+    expect(host.shells).toEqual([2]);
+    host.held.add(2);
+    press(workspace, "ctrl+p", "escape");
+    expect(workspace.mode).toBe("normal");
+    press(workspace, "ctrl+c");
+    expect(paneIds(workspace.tab.root)).toEqual([1]);
+    expect(press(workspace, "x")).toEqual([false]);
   });
 
   test("resize mode grows the focused pane", () => {

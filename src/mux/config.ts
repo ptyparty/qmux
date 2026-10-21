@@ -7,7 +7,8 @@ import { leaf, type LayoutNode, type PaneId } from "./layout.ts";
 
 export type PaneSpec = { command?: string[]; name?: string; focus?: boolean; size?: number };
 export type SplitSpec = { row: LayoutSpec[]; size?: number } | { column: LayoutSpec[]; size?: number };
-export type LayoutSpec = PaneSpec | SplitSpec;
+export type StackSpec = { stack: PaneSpec[]; size?: number };
+export type LayoutSpec = PaneSpec | SplitSpec | StackSpec;
 
 const size = z.number().positive().optional().describe("Share of the parent split, relative to its siblings (default 1)");
 
@@ -24,6 +25,7 @@ const layoutSpec: z.ZodType<LayoutSpec> = z.lazy(() =>
   z.union([
     z.object({ row: z.array(layoutSpec).min(1), size }).strict(),
     z.object({ column: z.array(layoutSpec).min(1), size }).strict(),
+    z.object({ stack: z.array(paneSpec).min(1), size }).strict(),
     paneSpec,
   ]),
 );
@@ -76,6 +78,11 @@ export function planLayout(spec: LayoutSpec, allocate: () => PaneId): { root: La
   const panes: PlannedPane[] = [];
   let focus: PaneId | undefined;
   const build = (node: LayoutSpec): LayoutNode => {
+    if ("stack" in node) {
+      const members = node.stack.map((member) => build(member) as { kind: "pane"; id: PaneId });
+      if (members.length === 1) return members[0]!;
+      return { kind: "stack", panes: members.map((member) => member.id), expanded: 0 };
+    }
     if ("row" in node || "column" in node) {
       const axis = "row" in node ? "row" : "column";
       const children = "row" in node ? node.row : node.column;

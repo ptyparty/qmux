@@ -45,6 +45,19 @@ describe("config", () => {
     expect(error).toContain("boom");
   });
 
+  test("planning a stack", () => {
+    let next = 1;
+    const plan = planLayout({ row: [{}, { stack: [{ command: ["remax"] }, {}] }] }, () => next++);
+    expect(plan.root).toEqual({
+      kind: "split",
+      axis: "row",
+      children: [
+        { node: { kind: "pane", id: 1 }, weight: 0.5 },
+        { node: { kind: "stack", panes: [2, 3], expanded: 0 }, weight: 0.5 },
+      ],
+    });
+  });
+
   test("planning a layout allocates panes, honours sizes, and picks the focus", () => {
     let next = 10;
     const plan = planLayout({ row: [{ command: ["dev", "claude"], size: 2 }, { column: [{ command: ["remax"] }, { focus: true }] }] }, () => next++);

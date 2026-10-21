@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, type LayoutNode } from "./layout.ts";
+import { addToFirstStack, expandPane, growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, stackPane, type LayoutNode } from "./layout.ts";
 
 function grid(): LayoutNode {
   let root = leaf(1);
@@ -73,5 +73,52 @@ describe("layout", () => {
     expect(paneRects(root).get(2)!.width).toBeCloseTo(0.05);
     for (let i = 0; i < 20; i++) root = shrinkPane(root, 1, "right", 0.1);
     expect(paneRects(root).get(1)!.width).toBeCloseTo(0.05);
+  });
+
+  describe("stacks", () => {
+    function ide(): LayoutNode {
+      return { kind: "split", axis: "row", children: [{ node: leaf(1), weight: 0.5 }, { node: { kind: "stack", panes: [2, 3], expanded: 0 }, weight: 0.5 }] };
+    }
+
+    test("stacking a plain pane turns it into a stack with the new pane expanded", () => {
+      expect(stackPane(leaf(1), 1, 2)).toEqual({ kind: "stack", panes: [1, 2], expanded: 1 });
+    });
+
+    test("stacking onto a stacked pane inserts after it", () => {
+      expect(stackPane(ide(), 2, 4)).toMatchObject({ children: [{}, { node: { panes: [2, 4, 3], expanded: 1 } }] });
+    });
+
+    test("new panes can join the first stack", () => {
+      expect(addToFirstStack(ide(), 4)).toMatchObject({ children: [{}, { node: { panes: [2, 3, 4], expanded: 2 } }] });
+      expect(addToFirstStack(leaf(1), 2)).toBeUndefined();
+    });
+
+    test("focus moves through stack members and sideways lands on the expanded one", () => {
+      expect(neighbor(ide(), 2, "down")).toBe(3);
+      expect(neighbor(ide(), 3, "up")).toBe(2);
+      expect(neighbor(ide(), 1, "right")).toBe(2);
+      expect(neighbor(expandPane(ide(), 3), 1, "right")).toBe(3);
+    });
+
+    test("expanding a member", () => {
+      expect(expandPane(ide(), 3)).toMatchObject({ children: [{}, { node: { expanded: 1 } }] });
+    });
+
+    test("removing members keeps the expanded pane sensible and collapses a single member", () => {
+      const three: LayoutNode = { kind: "stack", panes: [1, 2, 3], expanded: 2 };
+      expect(removePane(three, 1)).toEqual({ kind: "stack", panes: [2, 3], expanded: 1 });
+      expect(removePane(three, 3)).toEqual({ kind: "stack", panes: [1, 2], expanded: 1 });
+      expect(removePane(ide(), 3)).toMatchObject({ children: [{}, { node: leaf(2) }] });
+    });
+
+    test("splitting a stacked pane splits beside the whole stack", () => {
+      const root = splitPane(ide(), 3, "column", 4);
+      expect(paneIds(root)).toEqual([1, 2, 3, 4]);
+      expect(root).toMatchObject({ children: [{}, { node: { kind: "split", axis: "column", children: [{ node: { kind: "stack" } }, { node: leaf(4) }] } }] });
+    });
+
+    test("stacks resize like any other pane", () => {
+      expect(paneRects(growPane(ide(), 2, "left", 0.1)).get(1)!.width).toBeCloseTo(0.4);
+    });
   });
 });

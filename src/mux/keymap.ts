@@ -7,6 +7,7 @@ export type Command =
   | { type: "focus"; direction: Direction }
   | { type: "cycle-pane"; delta: number }
   | { type: "new-pane"; axis?: Axis }
+  | { type: "stack-pane" }
   | { type: "close-pane" }
   | { type: "zoom" }
   | { type: "rename-pane" }
@@ -75,6 +76,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["n"], command: { type: "new-pane" }, then: "normal" },
       { keys: ["d"], command: { type: "new-pane", axis: "column" }, then: "normal" },
       { keys: ["r"], command: { type: "new-pane", axis: "row" }, then: "normal" },
+      { keys: ["s"], command: { type: "stack-pane" }, then: "normal" },
       { keys: ["x"], command: { type: "close-pane" }, then: "normal" },
       { keys: ["f"], command: { type: "zoom" }, then: "normal" },
       { keys: ["c"], command: { type: "rename-pane" }, then: "normal" },
@@ -85,6 +87,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "n", description: "new" },
       { keys: "d", description: "new below" },
       { keys: "r", description: "new right" },
+      { keys: "s", description: "new stacked" },
       { keys: "x", description: "close" },
       { keys: "f", description: "zoom" },
       { keys: "c", description: "rename" },

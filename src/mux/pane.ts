@@ -6,27 +6,39 @@ import type { PaneId } from "./layout.ts";
 import { Pty, type ReadScheduler } from "./pty.ts";
 import { theme } from "./theme.ts";
 
-export type PaneEvents = { onExit: (id: PaneId) => void; onClick: (id: PaneId) => void };
+export type PaneEvents = {
+  onExit: (id: PaneId) => void;
+  onHeld: (id: PaneId) => void;
+  onClick: (id: PaneId) => void;
+};
 
-export type PaneOptions = { cwd?: string; command?: string[]; env?: Record<string, string> };
+export type PaneOptions = { cwd?: string; command?: string[]; env?: Record<string, string>; holdOnExit?: boolean };
+
+const resetTerminal = "\x1bc";
 
 export class Pane {
   readonly frame: BoxRenderable;
   private readonly view: EmbeddedTerminalRenderable;
-  private readonly pty: Pty;
+  private pty: Pty;
+  private size = { cols: 80, rows: 24 };
+  private exitCode: number | null | undefined;
+  private command: string[] | undefined;
 
   constructor(
     renderer: CliRenderer,
     readonly id: PaneId,
-    options: PaneOptions,
+    private readonly options: PaneOptions,
     private readonly scheduler: ReadScheduler,
-    events: PaneEvents,
+    private readonly events: PaneEvents,
   ) {
     this.view = new EmbeddedTerminalRenderable(renderer, {
       width: "100%",
       height: "100%",
       onData: (data) => this.pty.write(data),
-      onTerminalResize: (cols, rows) => this.pty.resize(cols, rows),
+      onTerminalResize: (cols, rows) => {
+        this.size = { cols, rows };
+        this.pty.resize(cols, rows);
+      },
     });
     this.frame = new BoxRenderable(renderer, {
       border: true,
@@ -40,43 +52,45 @@ export class Pane {
       onMouseDown: () => events.onClick(id),
     });
     this.frame.add(this.view);
-    this.pty = new Pty({
-      command: options.command ?? [process.env.SHELL ?? "/bin/sh"],
-      cols: 80,
-      rows: 24,
-      cwd: options.cwd ?? process.cwd(),
-      scheduler,
-      onData: (data) => this.view.write(data),
-      onExit: () => events.onExit(id),
-      env: { ...paneEnvironment(id), ...options.env },
-    });
+    this.pty = this.start(options.command);
+  }
+
+  get exited(): boolean {
+    return this.exitCode !== undefined;
   }
 
   cwd(): string | undefined {
     try {
       return readlinkSync(`/proc/${this.pty.child.pid}/cwd`);
     } catch {
-      return undefined;
+      return this.options.cwd;
     }
   }
 
   label(name: string | undefined): string {
-    if (name) return name;
-    const cwd = this.cwd();
-    if (!cwd) return `Pane #${this.id}`;
-    return cwd === homedir() ? "~" : basename(cwd);
+    const base = name ?? this.command?.join(" ") ?? this.directoryLabel();
+    if (this.exitCode === undefined) return base;
+    return `${base} · exited${this.exitCode === null ? "" : ` ${this.exitCode}`}`;
   }
 
   show(title: string, focused: boolean): void {
     this.frame.title = ` ${title} `;
     this.frame.borderColor = focused ? theme.accent : theme.border;
-    this.frame.titleColor = focused ? theme.accent : theme.muted;
+    this.frame.titleColor = this.exited ? theme.warning : focused ? theme.accent : theme.muted;
     if (focused) {
       this.view.focus();
       this.scheduler.setPriority(this.pty);
     } else {
       this.view.blur();
     }
+  }
+
+  rerun(): void {
+    this.restartWith(this.options.command);
+  }
+
+  replaceWithShell(): void {
+    this.restartWith(undefined);
   }
 
   kill(): void {
@@ -86,6 +100,45 @@ export class Pane {
   destroy(): void {
     this.pty.kill();
     this.frame.destroyRecursively();
+  }
+
+  private restartWith(command: string[] | undefined): void {
+    this.exitCode = undefined;
+    this.view.write(resetTerminal);
+    this.pty = this.start(command);
+  }
+
+  private start(command: string[] | undefined): Pty {
+    this.command = command;
+    const pty: Pty = new Pty({
+      command: command ?? [process.env.SHELL ?? "/bin/sh"],
+      cols: this.size.cols,
+      rows: this.size.rows,
+      cwd: this.options.cwd ?? process.cwd(),
+      scheduler: this.scheduler,
+      onData: (data) => this.view.write(data),
+      onExit: () => this.childExited(pty, command !== undefined),
+      env: { ...paneEnvironment(this.id), ...this.options.env },
+    });
+    return pty;
+  }
+
+  private childExited(pty: Pty, ranCommand: boolean): void {
+    if (pty !== this.pty) return;
+    if (!ranCommand || !this.options.holdOnExit) return this.events.onExit(this.id);
+    pty.child.exited.then((code) => {
+      if (pty !== this.pty) return;
+      this.exitCode = code;
+      const status = code === null ? "Exited" : `Exited with code ${code}`;
+      this.view.write(`\r\n\x1b[0m\x1b[2m[${status} · Enter re-run · Esc shell · Ctrl+c close]\x1b[0m`);
+      this.events.onHeld(this.id);
+    });
+  }
+
+  private directoryLabel(): string {
+    const cwd = this.cwd();
+    if (!cwd) return `Pane #${this.id}`;
+    return cwd === homedir() ? "~" : basename(cwd);
   }
 }
 

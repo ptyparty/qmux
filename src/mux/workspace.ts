@@ -1,4 +1,4 @@
-import { growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { addToFirstStack, expandPane, growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, stackPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { defaultConfig, planLayout, type Config, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, rankProjects, resolveTarget, type Project } from "./projects.ts";
@@ -20,6 +20,9 @@ export interface PaneHost {
   projects(): Project[];
   destroy(id: PaneId): void;
   closePopup(id: PaneId): void;
+  isHeld(id: PaneId): boolean;
+  rerun(id: PaneId): void;
+  replaceWithShell(id: PaneId): void;
   cwd(id: PaneId): string | undefined;
   screen(): { cols: number; rows: number };
 }
@@ -73,6 +76,18 @@ export class Workspace {
   }
 
   handleKey(key: InputKey): boolean {
+    try {
+      return this.dispatchKey(key);
+    } finally {
+      this.expandFocused();
+    }
+  }
+
+  private expandFocused(): void {
+    for (const tab of this.tabs) tab.root = expandPane(tab.root, tab.focused);
+  }
+
+  private dispatchKey(key: InputKey): boolean {
     this.message = undefined;
     if (this.popup && this.mode !== "session" && !(keyName(key) === "ctrl+o")) return false;
     if (this.prompt) {
@@ -85,7 +100,29 @@ export class Workspace {
       if (binding.then) this.mode = binding.then;
       return true;
     }
+    if (this.mode === "normal" && this.host.isHeld(this.tab.focused)) return this.heldKey(key);
     return this.mode !== "normal" && this.mode !== "locked";
+  }
+
+  focusedPaneHeld(): boolean {
+    return this.host.isHeld(this.tab.focused);
+  }
+
+  private heldKey(key: InputKey): boolean {
+    const id = this.tab.focused;
+    switch (keyName(key)) {
+      case "return":
+        this.host.rerun(id);
+        break;
+      case "escape":
+        this.host.replaceWithShell(id);
+        break;
+      case "ctrl+c":
+        this.host.destroy(id);
+        this.paneExited(id);
+        break;
+    }
+    return true;
   }
 
   focusPane(id: PaneId): void {
@@ -93,6 +130,7 @@ export class Workspace {
     if (index < 0) return;
     this.active = index;
     this.tab.focused = id;
+    this.expandFocused();
   }
 
   openProject(target: string): string | undefined {
@@ -118,6 +156,7 @@ export class Workspace {
     tab.root = root;
     if (tab.focused === id) tab.focused = paneIds(root)[0]!;
     tab.zoomed = false;
+    this.expandFocused();
   }
 
   private run(command: Command): void {
@@ -137,6 +176,8 @@ export class Workspace {
       }
       case "new-pane":
         return this.newPane(command.axis);
+      case "stack-pane":
+        return this.addPane((root, focused, id) => stackPane(root, focused, id));
       case "close-pane": {
         const id = this.tab.focused;
         this.host.destroy(id);
@@ -186,9 +227,15 @@ export class Workspace {
   }
 
   private newPane(axis: Axis | undefined): void {
+    this.addPane((root, focused, id) =>
+      (axis === undefined ? addToFirstStack(root, id) : undefined) ?? splitPane(root, focused, axis ?? this.preferredAxis(this.tab), id),
+    );
+  }
+
+  private addPane(place: (root: LayoutNode, focused: PaneId, id: PaneId) => LayoutNode): void {
     const tab = this.tab;
     const id = this.nextPaneId++;
-    tab.root = splitPane(tab.root, tab.focused, axis ?? this.preferredAxis(tab), id);
+    tab.root = place(tab.root, tab.focused, id);
     const cwd = this.host.cwd(tab.focused);
     tab.focused = id;
     tab.zoomed = false;

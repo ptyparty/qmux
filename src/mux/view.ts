@@ -1,7 +1,7 @@
 import { BoxRenderable, TextRenderable, bg, bold, fg, type CliRenderer, type StyledText } from "@opentui/core";
 import { styled, type Part } from "../ui/styled.ts";
-import { hints, modeHints, type Mode } from "./keymap.ts";
-import { paneIds, type LayoutNode, type PaneId } from "./layout.ts";
+import { hints, modeHints, type Hint, type Mode } from "./keymap.ts";
+import { paneIds, type LayoutNode, type PaneId, type StackNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { theme } from "./theme.ts";
 import type { Workspace } from "./workspace.ts";
@@ -13,12 +13,14 @@ export class MuxView {
   private readonly hintBar: TextRenderable;
   private readonly overlay: BoxRenderable;
   private bodySignature = "";
+  private readonly stackTitles = new Map<PaneId, TextRenderable>();
   private overlayPane: PaneId | undefined;
 
   constructor(
     private readonly renderer: CliRenderer,
     private readonly workspace: Workspace,
     private readonly panes: Map<PaneId, Pane>,
+    private readonly onFocusPane: (id: PaneId) => void,
   ) {
     const root = new BoxRenderable(renderer, { flexDirection: "column", width: "100%", height: "100%", backgroundColor: theme.background });
     this.tabBar = new TextRenderable(renderer, { height: 1, bg: theme.surface });
@@ -48,7 +50,10 @@ export class MuxView {
     const popup = this.renderOverlay();
     for (const id of paneIds(tab.root)) {
       const pane = this.panes.get(id);
-      pane?.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup);
+      if (!pane) continue;
+      const title = this.stackTitles.get(id);
+      if (title) title.content = styled([fg(theme.muted)(` ▸ ${this.paneTitle(id, pane)}`)]);
+      else pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup);
     }
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();
@@ -66,6 +71,7 @@ export class MuxView {
       }
     }
     for (const child of this.body.getChildren()) child.destroyRecursively();
+    this.stackTitles.clear();
     const zoomedPane = zoomed === undefined ? undefined : this.panes.get(zoomed);
     if (zoomedPane) this.body.add(this.slot(zoomedPane.frame, 1));
     else this.body.add(this.build(root, 1));
@@ -92,6 +98,7 @@ export class MuxView {
       const pane = this.panes.get(node.id);
       return pane ? this.slot(pane.frame, weight) : new BoxRenderable(this.renderer, { flexGrow: weight, flexBasis: 0 });
     }
+    if (node.kind === "stack") return this.buildStack(node, weight);
     const container = new BoxRenderable(this.renderer, {
       flexDirection: node.axis,
       flexGrow: weight,
@@ -100,6 +107,22 @@ export class MuxView {
       minHeight: 0,
     });
     for (const child of node.children) container.add(this.build(child.node, child.weight));
+    return container;
+  }
+
+  private buildStack(stack: StackNode, weight: number): BoxRenderable {
+    const container = new BoxRenderable(this.renderer, { flexDirection: "column", flexGrow: weight, flexBasis: 0, minWidth: 0, minHeight: 0 });
+    stack.panes.forEach((id, index) => {
+      const pane = this.panes.get(id);
+      if (!pane) return;
+      if (index === stack.expanded) {
+        container.add(this.slot(pane.frame, 1));
+        return;
+      }
+      const title = new TextRenderable(this.renderer, { height: 1, bg: theme.surface, onMouseDown: () => this.onFocusPane(id) });
+      this.stackTitles.set(id, title);
+      container.add(title);
+    });
     return container;
   }
 
@@ -151,13 +174,22 @@ export class MuxView {
       return styled(parts);
     }
     if (message) return styled([" ", fg(theme.warning)(message)]);
+    if (mode === "normal" && this.workspace.focusedPaneHeld()) {
+      return styled([" ", fg(theme.warning)("Command exited"), fg(theme.border)("  ·  "), ...hintParts(mode, heldHints).slice(1)]);
+    }
     return styled(hintParts(mode));
   }
 }
 
-function hintParts(mode: Mode): Part[] {
+const heldHints: Hint[] = [
+  { keys: "Enter", description: "re-run" },
+  { keys: "Esc", description: "shell" },
+  { keys: "^c", description: "close" },
+];
+
+function hintParts(mode: Mode, list: Hint[] = hints(mode)): Part[] {
   const parts: Part[] = [" "];
-  hints(mode).forEach((hint, index) => {
+  list.forEach((hint, index) => {
     if (index > 0) parts.push(fg(theme.border)("  ·  "));
     parts.push(bold(fg(theme.accent)(hint.keys)), fg(theme.muted)(` ${hint.description}`));
   });

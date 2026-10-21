@@ -1,4 +1,4 @@
-import { addToFirstStack, expandPane, growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, stackPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { addToFirstTabs, selectPaneTab, growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { defaultConfig, planLayout, type Config, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
@@ -93,12 +93,12 @@ export class Workspace {
     try {
       return this.dispatchKey(key);
     } finally {
-      this.expandFocused();
+      this.selectFocusedTabs();
     }
   }
 
-  private expandFocused(): void {
-    for (const tab of this.tabs) tab.root = expandPane(tab.root, tab.focused);
+  private selectFocusedTabs(): void {
+    for (const tab of this.tabs) tab.root = selectPaneTab(tab.root, tab.focused);
     const focused = this.tabs[this.active]?.focused;
     if (focused !== undefined && this.agents.get(focused) === "done") this.agents.delete(focused);
   }
@@ -196,7 +196,7 @@ export class Workspace {
     if (index < 0) return;
     this.active = index;
     this.tab.focused = id;
-    this.expandFocused();
+    this.selectFocusedTabs();
   }
 
   openProject(target: string): string | undefined {
@@ -223,7 +223,7 @@ export class Workspace {
     tab.root = root;
     if (tab.focused === id) tab.focused = paneIds(root)[0]!;
     tab.zoomed = false;
-    this.expandFocused();
+    this.selectFocusedTabs();
   }
 
   private run(command: Command): void {
@@ -243,8 +243,8 @@ export class Workspace {
       }
       case "new-pane":
         return this.newPane(command.axis);
-      case "stack-pane":
-        return this.addPane((root, focused, id) => stackPane(root, focused, id));
+      case "tab-pane":
+        return this.addPane((root, focused, id) => addPaneTab(root, focused, id));
       case "close-pane": {
         const id = this.tab.focused;
         this.host.destroy(id);
@@ -297,7 +297,7 @@ export class Workspace {
 
   private newPane(axis: Axis | undefined): void {
     this.addPane((root, focused, id) =>
-      (axis === undefined ? addToFirstStack(root, id) : undefined) ?? splitPane(root, focused, axis ?? this.preferredAxis(this.tab), id),
+      (axis === undefined ? addToFirstTabs(root, id) : undefined) ?? splitPane(root, focused, axis ?? this.preferredAxis(this.tab), id),
     );
   }
 
@@ -312,7 +312,7 @@ export class Workspace {
   }
 
   private preferredAxis(tab: Tab): Axis {
-    const rect = paneRects(tab.root, undefined, tab.focused).get(tab.focused)!;
+    const rect = paneRects(tab.root).get(tab.focused)!;
     const { cols, rows } = this.host.screen();
     return rect.width * cols > rect.height * rows * 2.2 ? "row" : "column";
   }

@@ -2,7 +2,7 @@ import { BoxRenderable, TextRenderable, bg, bold, fg, type CliRenderer, type Sty
 import { styled, type Part } from "../ui/styled.ts";
 import { hints, modeHints, type Hint, type Mode } from "./keymap.ts";
 import { Launcher } from "./launcher.ts";
-import { paneIds, shownMember, type LayoutNode, type PaneId, type StackNode } from "./layout.ts";
+import { paneIds, shownPaneTab, type LayoutNode, type PaneId, type TabsNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { theme } from "./theme.ts";
 import type { AgentState, Workspace } from "./workspace.ts";
@@ -14,7 +14,7 @@ export class MuxView {
   private readonly hintBar: TextRenderable;
   private readonly overlay: BoxRenderable;
   private bodySignature = "";
-  private readonly stackTitles = new Map<PaneId, BoxRenderable>();
+  private paneTabStrips: { strip: TextRenderable; group: TabsNode; ranges: { start: number; end: number; id: PaneId }[] }[] = [];
   private readonly launcher: Launcher;
   private overlayPane: PaneId | undefined;
 
@@ -54,10 +54,9 @@ export class MuxView {
     for (const id of paneIds(tab.root)) {
       const pane = this.panes.get(id);
       if (!pane) continue;
-      const folded = this.stackTitles.get(id);
-      if (folded) folded.title = ` ▸ ${this.paneTitle(id, pane)} `;
       pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
     }
+    this.renderPaneTabStrips();
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();
     this.hintBar.content = this.renderHints();
@@ -75,7 +74,7 @@ export class MuxView {
       }
     }
     for (const child of this.body.getChildren()) child.destroyRecursively();
-    this.stackTitles.clear();
+    this.paneTabStrips = [];
     const zoomedPane = zoomed === undefined ? undefined : this.panes.get(zoomed);
     if (zoomedPane) this.body.add(this.slot(zoomedPane.frame, 1));
     else this.body.add(this.build(root, 1));
@@ -102,7 +101,7 @@ export class MuxView {
       const pane = this.panes.get(node.id);
       return pane ? this.slot(pane.frame, weight) : new BoxRenderable(this.renderer, { flexGrow: weight, flexBasis: 0 });
     }
-    if (node.kind === "stack") return this.buildStack(node, weight);
+    if (node.kind === "tabs") return this.buildTabs(node, weight);
     const container = new BoxRenderable(this.renderer, {
       flexDirection: node.axis,
       flexGrow: weight,
@@ -114,30 +113,47 @@ export class MuxView {
     return container;
   }
 
-  private buildStack(stack: StackNode, weight: number): BoxRenderable {
+  private buildTabs(group: TabsNode, weight: number): BoxRenderable {
     const container = new BoxRenderable(this.renderer, { flexDirection: "column", flexGrow: weight, flexBasis: 0, minWidth: 0, minHeight: 0 });
-    const shown = shownMember(stack, this.workspace.tab.focused);
-    stack.panes.forEach((id, index) => {
-      const pane = this.panes.get(id);
-      if (!pane) return;
-      if (index === shown) {
-        container.add(this.slot(pane.frame, 1));
-        return;
-      }
-      const folded = new BoxRenderable(this.renderer, {
-        height: 1,
-        flexShrink: 0,
-        border: ["top", "left", "right"],
-        borderStyle: "rounded",
-        borderColor: theme.border,
-        titleColor: theme.muted,
-        backgroundColor: theme.background,
-        onMouseDown: () => this.onFocusPane(id),
-      });
-      this.stackTitles.set(id, folded);
-      container.add(folded);
-    });
+    const strip = new TextRenderable(this.renderer, { height: 1, flexShrink: 0, bg: theme.surface, wrapMode: "none" });
+    const entry = { strip, group, ranges: [] as { start: number; end: number; id: PaneId }[] };
+    strip.onMouseDown = (event) => {
+      const offset = event.x - strip.screenX;
+      const hit = entry.ranges.find((range) => offset >= range.start && offset < range.end);
+      if (hit) this.onFocusPane(hit.id);
+    };
+    this.paneTabStrips.push(entry);
+    container.add(strip);
+    const shown = this.panes.get(group.panes[shownPaneTab(group, this.workspace.tab.focused)]!);
+    if (shown) container.add(this.slot(shown.frame, 1));
     return container;
+  }
+
+  private renderPaneTabStrips(): void {
+    const focused = this.workspace.tab.focused;
+    for (const entry of this.paneTabStrips) {
+      const selected = shownPaneTab(entry.group, focused);
+      const groupFocused = entry.group.panes.includes(focused) && !this.workspace.prompt && !this.workspace.popup;
+      const parts: Part[] = [" "];
+      let column = 1;
+      entry.ranges = [];
+      entry.group.panes.forEach((id, index) => {
+        const pane = this.panes.get(id);
+        if (!pane) return;
+        if (index > 0) {
+          parts.push(fg(theme.border)("│"));
+          column += 1;
+        }
+        const state = this.workspace.agents.get(id);
+        const label = ` ${state ? `${agentBadges[state]} ` : ""}${pane.label(this.workspace.paneNames.get(id))} `;
+        const color = groupFocused ? modeFocusColor(this.workspace.mode) : theme.border;
+        if (index === selected) parts.push(bold(bg(color)(fg(groupFocused ? theme.background : theme.text)(label))));
+        else parts.push(state ? fg(agentColors[state])(label) : fg(theme.muted)(label));
+        entry.ranges.push({ start: column, end: column + label.length, id });
+        column += label.length;
+      });
+      entry.strip.content = styled(parts);
+    }
   }
 
   private slot(frame: BoxRenderable, weight: number): BoxRenderable {

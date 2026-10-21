@@ -40,28 +40,35 @@ describe("config", () => {
     expect(error).toContain("colours");
   });
 
+  test("stack is no longer accepted in layouts", async () => {
+    const path = writeConfig("stack.ts", `export default { layouts: { ide: { row: [{}, { stack: [{}, {}] }] } } };`);
+    const { config, error } = await loadConfig(path);
+    expect(config).toEqual(defaultConfig);
+    expect(error).toBeDefined();
+  });
+
   test("a config that throws falls back to defaults with an error", async () => {
     const { error } = await loadConfig(writeConfig("throws.ts", `throw new Error("boom");`));
     expect(error).toContain("boom");
   });
 
-  test("planning a stack", () => {
+  test("planning pane tabs", () => {
     let next = 1;
-    const plan = planLayout({ row: [{}, { stack: [{ command: ["remax"] }, {}] }] }, () => next++);
+    const plan = planLayout({ row: [{}, { tabs: [{ command: ["remax"] }, {}] }] }, () => next++);
     expect(plan.root).toEqual({
       kind: "split",
       axis: "row",
       children: [
         { node: { kind: "pane", id: 1 }, weight: 0.5 },
-        { node: { kind: "stack", panes: [2, 3], expanded: 0 }, weight: 0.5 },
+        { node: { kind: "tabs", panes: [2, 3], selected: 0 }, weight: 0.5 },
       ],
     });
   });
 
   test("a focused stack member is the one the stack shows", () => {
     let next = 1;
-    const plan = planLayout({ stack: [{}, { focus: true }] }, () => next++);
-    expect(plan.root).toEqual({ kind: "stack", panes: [1, 2], expanded: 1 });
+    const plan = planLayout({ tabs: [{}, { focus: true }] }, () => next++);
+    expect(plan.root).toEqual({ kind: "tabs", panes: [1, 2], selected: 1 });
     expect(plan.focus).toBe(2);
   });
 

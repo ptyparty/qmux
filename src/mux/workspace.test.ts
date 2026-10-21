@@ -265,21 +265,23 @@ describe("Workspace", () => {
     expect([host.commands.get(2), host.commands.get(3), host.commands.get(4)]).toEqual([["dev", "claude"], ["remax"], undefined]);
   });
 
-  test("stacks: new panes join the stack, focus expands members, s stacks onto the focused pane", () => {
+  test("pane groups: new panes join the group, focus walks members left to right, s groups onto the focused pane", () => {
     const config = configSchema.parse({
       projects: { layout: "ide" },
-      layouts: { ide: { row: [{ focus: true }, { stack: [{ command: ["remax"] }, {}] }] } },
+      layouts: { ide: { row: [{ focus: true }, { tabs: [{ command: ["remax"] }, {}] }] } },
     });
     const workspace = new Workspace(new FakeHost(), "/home", config);
     workspace.openProject("merlin");
-    expect(workspace.tab.root).toMatchObject({ children: [{ node: { id: 2 } }, { node: { kind: "stack", panes: [3, 4], expanded: 0 } }] });
-    press(workspace, "alt+s", "alt+n");
+    expect(workspace.tab.root).toMatchObject({ children: [{ node: { id: 2 } }, { node: { kind: "tabs", panes: [3, 4], selected: 0 } }] });
+    press(workspace, "alt+s", "alt+s");
     expect(workspace.tab.focused).toBe(4);
-    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { expanded: 1 } }] });
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { selected: 1 } }] });
     press(workspace, "ctrl+p", "n");
-    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { panes: [3, 4, 5], expanded: 2 } }] });
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { panes: [3, 4, 5], selected: 2 } }] });
+    press(workspace, "alt+h", "alt+h");
+    expect(workspace.tab.focused).toBe(3);
     press(workspace, "alt+h", "ctrl+p", "s");
-    expect(workspace.tab.root).toMatchObject({ children: [{ node: { kind: "stack", panes: [2, 6], expanded: 1 } }, {}] });
+    expect(workspace.tab.root).toMatchObject({ children: [{ node: { kind: "tabs", panes: [2, 6], selected: 1 } }, {}] });
   });
 
   test("the project launcher selects matches with the arrow keys", () => {

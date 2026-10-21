@@ -98,6 +98,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     const pane = [...panes.values()].find((candidate) => candidate.owns(renderable));
     if (!pane || pane.id === workspace.tab.focused || workspace.popup || !paneIds(workspace.tab.root).includes(pane.id)) return;
     workspace.focusPane(pane.id);
+    workspace.message = "Focus moved by a mouse click";
     refresh();
   });
 

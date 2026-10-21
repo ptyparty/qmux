@@ -56,8 +56,7 @@ export class MuxView {
       if (!pane) continue;
       const title = this.stackTitles.get(id);
       if (title) title.content = styled([fg(theme.muted)(` ▸ ${this.paneTitle(id, pane)}`)]);
-      const mode = this.workspace.mode;
-      pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup, mode === "normal" ? theme.accent : theme.modes[mode]);
+      pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
     }
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();
@@ -146,12 +145,13 @@ export class MuxView {
   }
 
   private renderTabs(): StyledText {
+    const focusColor = modeFocusColor(this.workspace.mode);
     const parts: Part[] = [bold(fg(theme.accent)(" qmux "))];
     this.workspace.tabs.forEach((tab, index) => {
       const active = index === this.workspace.active;
       const asking = this.workspace.popupsWaiting(tab) > 0 ? " ?" : "";
       const attention = this.workspace.tabAttention(tab);
-      const paint = (text: string, color: string) => (active ? bold(bg(theme.accent)(fg(theme.background)(text))) : fg(color)(text));
+      const paint = (text: string, color: string) => (active ? bold(bg(focusColor)(fg(theme.background)(text))) : fg(color)(text));
       parts.push(paint(` ${index + 1} ${tab.name}${asking}`, theme.muted));
       if (attention) parts.push(paint(` ${agentBadges[attention]}`, agentColors[attention]));
       parts.push(paint(" ", theme.muted), " ");
@@ -182,6 +182,10 @@ export class MuxView {
     }
     return styled(hintParts(mode));
   }
+}
+
+function modeFocusColor(mode: Mode): string {
+  return mode === "normal" ? theme.accent : theme.modes[mode];
 }
 
 const agentBadges: Record<AgentState, string> = { working: "●", waiting: "!", done: "✓" };

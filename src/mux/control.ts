@@ -6,6 +6,7 @@ export const controlRequest = z.discriminatedUnion("method", [
     method: z.literal("popup.open"),
     params: z.object({ title: z.string(), command: z.array(z.string()).min(1) }),
   }),
+  z.object({ method: z.literal("project.open"), params: z.object({ target: z.string().min(1) }) }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),
 ]);

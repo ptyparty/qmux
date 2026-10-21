@@ -139,7 +139,17 @@ export class MuxView {
 
   private renderHints(): StyledText {
     const { prompt, message, mode } = this.workspace;
-    if (prompt) return styled([" ", bold(fg(theme.warning)(prompt.label)), ": ", fg(theme.text)(prompt.text), bg(theme.text)(" "), fg(theme.muted)("   Enter confirm · Esc cancel")]);
+    if (prompt) {
+      const parts: Part[] = [" ", bold(fg(theme.warning)(prompt.label)), ": ", fg(theme.text)(prompt.text), bg(theme.text)(" ")];
+      if (prompt.matches) {
+        parts.push("  ");
+        prompt.matches.forEach((match, index) => parts.push(index === 0 ? bold(fg(theme.accent)(match.name)) : fg(theme.muted)(match.name), "  "));
+        parts.push(fg(theme.muted)(prompt.matches.length ? "· Tab complete · Enter open · Esc cancel" : "no matches · Esc cancel"));
+      } else {
+        parts.push(fg(theme.muted)("   Enter confirm · Esc cancel"));
+      }
+      return styled(parts);
+    }
     if (message) return styled([" ", fg(theme.warning)(message)]);
     return styled(hintParts(mode));
   }

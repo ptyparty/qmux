@@ -1,14 +1,23 @@
 import { growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { defaultConfig, planLayout, type Config, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
+import { expandHome, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
 
 export type Popup = { id: PaneId; title: string };
 
-export type Prompt = { kind: "rename-tab" | "rename-pane" | "close-tab"; label: string; text: string };
+export type Prompt = {
+  kind: "rename-tab" | "rename-pane" | "close-tab" | "open-project";
+  label: string;
+  text: string;
+  candidates?: Project[];
+  matches?: Project[];
+};
 
 export interface PaneHost {
-  create(id: PaneId, cwd: string | undefined): void;
+  create(id: PaneId, cwd: string | undefined, command?: string[]): void;
+  projects(): Project[];
   destroy(id: PaneId): void;
   closePopup(id: PaneId): void;
   cwd(id: PaneId): string | undefined;
@@ -18,6 +27,7 @@ export interface PaneHost {
 export type InputKey = Key & { sequence: string };
 
 const resizeStep = 0.05;
+const shownMatches = 6;
 
 export class Workspace {
   tabs: Tab[] = [];
@@ -36,6 +46,7 @@ export class Workspace {
   constructor(
     private readonly host: PaneHost,
     initialCwd?: string,
+    private readonly config: Config = defaultConfig,
   ) {
     this.openTab(initialCwd);
   }
@@ -84,6 +95,19 @@ export class Workspace {
     this.tab.focused = id;
   }
 
+  openProject(target: string): string | undefined {
+    const project = resolveTarget(target.trim(), this.host.cwd(this.tab.focused) ?? process.cwd(), this.host.projects());
+    if (!project) return `No project matches ${JSON.stringify(target.trim())}`;
+    const existing = this.tabs.findIndex((tab) => tab.name === project.name);
+    if (existing >= 0) {
+      this.active = existing;
+      return undefined;
+    }
+    const layout = this.config.projects.layout ? this.config.layouts[this.config.projects.layout] : undefined;
+    this.openTab(project.dir, { name: project.name, layout });
+    return undefined;
+  }
+
   paneExited(id: PaneId): void {
     const index = this.tabs.findIndex((tab) => paneIds(tab.root).includes(id));
     if (index < 0) return;
@@ -125,7 +149,12 @@ export class Workspace {
         this.prompt = { kind: "rename-pane", label: "Rename pane", text: this.paneNames.get(this.tab.focused) ?? "" };
         return;
       case "new-tab":
-        return this.openTab(this.host.cwd(this.tab.focused));
+        return this.openTab(this.config.defaultCwd ? expandHome(this.config.defaultCwd) : this.host.cwd(this.tab.focused));
+      case "open-project": {
+        const candidates = this.host.projects();
+        this.prompt = { kind: "open-project", label: "Open project", text: "", candidates, matches: candidates.slice(0, shownMatches) };
+        return;
+      }
       case "close-tab":
         this.prompt = { kind: "close-tab", label: `Type "${this.tab.name}" to close this tab`, text: "" };
         return;
@@ -172,12 +201,16 @@ export class Workspace {
     return rect.width * cols > rect.height * rows * 2.2 ? "row" : "column";
   }
 
-  private openTab(cwd: string | undefined): void {
-    const id = this.nextPaneId++;
+  private openTab(cwd: string | undefined, options: { name?: string; layout?: LayoutSpec } = {}): void {
     const number = this.nextTabNumber++;
-    this.tabs.splice(this.tabs.length === 0 ? 0 : this.active + 1, 0, { id: number, name: `Tab #${number}`, root: leaf(id), focused: id, zoomed: false });
+    const plan = planLayout(options.layout ?? {}, () => this.nextPaneId++);
+    const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: plan.root, focused: plan.focus, zoomed: false };
+    this.tabs.splice(this.tabs.length === 0 ? 0 : this.active + 1, 0, tab);
     this.active = this.tabs.length === 1 ? 0 : this.active + 1;
-    this.host.create(id, cwd);
+    for (const pane of plan.panes) {
+      if (pane.name) this.paneNames.set(pane.id, pane.name);
+      this.host.create(pane.id, cwd, pane.command);
+    }
   }
 
   private moveTab(delta: number): void {
@@ -216,11 +249,10 @@ export class Workspace {
       this.prompt = undefined;
       return this.commitPrompt(prompt);
     }
-    if (key.name === "backspace") {
-      prompt.text = prompt.text.slice(0, -1);
-      return;
-    }
-    if (!key.ctrl && !key.meta && isPrintable(key.sequence)) prompt.text += key.sequence;
+    if (key.name === "backspace") prompt.text = prompt.text.slice(0, -1);
+    else if (key.name === "tab" && prompt.matches?.[0]) prompt.text = prompt.matches[0].name;
+    else if (!key.ctrl && !key.meta && isPrintable(key.sequence)) prompt.text += key.sequence;
+    if (prompt.candidates) prompt.matches = rankProjects(prompt.text, prompt.candidates).slice(0, shownMatches);
   }
 
   private commitPrompt(prompt: Prompt): void {
@@ -237,6 +269,11 @@ export class Workspace {
         if (prompt.text === this.tab.name) return this.closeTab();
         this.message = "Kept the tab";
         return;
+      case "open-project": {
+        const target = text || prompt.matches?.[0]?.name;
+        if (target) this.message = this.openProject(target);
+        return;
+      }
     }
   }
 }

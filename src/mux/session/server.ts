@@ -3,6 +3,7 @@ import type { Socket } from "bun";
 import { rmSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import { serveControl } from "../control.ts";
+import { loadConfig } from "../config.ts";
 import { createMux, type Mux } from "../mux.ts";
 import { encodeFrame, FrameDecoder, type Frame, type Goodbye, type Hello, type Size } from "./protocol.ts";
 import { tryLock } from "./lock.ts";
@@ -92,9 +93,13 @@ export async function runServer(name: string): Promise<void> {
         maxFps: 120,
         useMouse: true,
       });
+      const { config, error } = await loadConfig();
+      if (error) console.error(error);
       mux = createMux(renderer, {
         session: name,
         controlSocket: paths.control,
+        config,
+        configError: error && "Could not load the qmux config; see the session log",
         onDetach: () => serialize(() => release(lastTyped, { reason: "detached", message: `Detached from session ${name}` })),
         onQuit: () => serialize(quit),
       });

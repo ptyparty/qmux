@@ -1,5 +1,7 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
+import type { Config } from "./config.ts";
 import type { ControlRequest, ControlResponse } from "./control.ts";
+import { findProjects } from "./projects.ts";
 import type { PaneId } from "./layout.ts";
 import { Pane } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
@@ -13,6 +15,8 @@ const titleRefreshMs = 1000;
 export type MuxOptions = {
   session: string;
   controlSocket: string;
+  config: Config;
+  configError?: string;
   onDetach: () => void;
   onQuit: () => void;
 };
@@ -60,7 +64,8 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   };
 
   const host: PaneHost = {
-    create: (id, cwd) => spawnPane(id, cwd, undefined, (exited) => workspace.paneExited(exited)),
+    create: (id, cwd, command) => spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited)),
+    projects: () => findProjects(options.config.projects.roots),
     destroy: (id) => {
       panes.get(id)?.destroy();
       panes.delete(id);
@@ -70,7 +75,8 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     screen: () => ({ cols: renderer.width, rows: renderer.height }),
   };
 
-  const workspace = new Workspace(host, process.cwd());
+  const workspace = new Workspace(host, process.cwd(), options.config);
+  workspace.message = options.configError;
   view = new MuxView(renderer, workspace, panes);
   view.render();
 
@@ -106,6 +112,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return { ok: true };
         case "session.info":
           return { ok: true, result: { session: options.session, tabs: workspace.tabs.length, panes: panes.size } };
+        case "project.open": {
+          const error = workspace.openProject(request.params.target);
+          refresh();
+          return error ? { ok: false, error } : { ok: true };
+        }
         case "session.quit":
           workspace.quit = true;
           refresh();

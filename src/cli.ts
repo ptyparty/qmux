@@ -8,6 +8,7 @@ import { UnsafeDirectoryError } from "./private-dir.ts";
 import { formSpec, parseFormSpec, type FormSpec } from "./form/schema.ts";
 import { showForm } from "./form/show.ts";
 import { serveStdio } from "./mcp/server.ts";
+import { sendControl } from "./mux/control.ts";
 import { attachSession } from "./mux/session/client.ts";
 import { runServer } from "./mux/session/server.ts";
 import { defaultSessionName, listSessions, quitSession, SessionError } from "./mux/session/sessions.ts";
@@ -22,6 +23,8 @@ Usage:
       List running sessions.
   qmux kill NAME
       End a session and every program running in it.
+  qmux project NAME|PATH
+      From inside a session, open a project in a new tab, or switch to its tab if it is open.
   qmux ask [spec.json|-] [--wait] [--timeout SECONDS] [--host auto|qmux|zellij|tmux|none]
       Open a form for the user and print {"id", "host", "message", "status", ...}.
       With --wait, block until the user answers (or the timeout passes).
@@ -70,6 +73,8 @@ async function main(argv: string[]): Promise<void> {
       return listCommand();
     case "kill":
       return quitSession(requireName(rest));
+    case "project":
+      return projectCommand(rest);
     case "server":
       return runServer(requireName(rest));
     case "help":
@@ -155,6 +160,17 @@ function requireId(positionals: string[]): string {
   const [id] = positionals;
   if (!id) throw new UsageError("missing ask id");
   return id;
+}
+
+async function projectCommand(args: string[]): Promise<void> {
+  const [target] = args;
+  if (!target) throw new UsageError("missing project name or path");
+  const socket = process.env.QMUX_SOCKET;
+  if (!socket) throw new UsageError("qmux project works from inside a qmux session");
+  const response = await sendControl(socket, { method: "project.open", params: { target } }).catch((error: Error) => {
+    throw new SessionError(error.message);
+  });
+  if (!response.ok) throw new SessionError(response.error);
 }
 
 async function listCommand(): Promise<void> {

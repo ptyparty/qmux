@@ -1,12 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { paneIds } from "./layout.ts";
+import { configSchema } from "./config.ts";
+import type { Project } from "./projects.ts";
 import { Workspace, type InputKey, type PaneHost } from "./workspace.ts";
 
 class FakeHost implements PaneHost {
   created: [number, string | undefined][] = [];
+  commands = new Map<number, string[] | undefined>();
   destroyed: number[] = [];
-  create(id: number, cwd: string | undefined): void {
+  knownProjects: Project[] = [
+    { name: "penguin", dir: "/work/exfresso/penguin" },
+    { name: "penguin-auth", dir: "/work/stories/penguin-auth" },
+    { name: "merlin", dir: "/work/exfresso/merlin" },
+  ];
+  create(id: number, cwd: string | undefined, command?: string[]): void {
     this.created.push([id, cwd]);
+    this.commands.set(id, command);
+  }
+  projects(): Project[] {
+    return this.knownProjects;
   }
   destroy(id: number): void {
     this.destroyed.push(id);
@@ -196,6 +208,40 @@ describe("Workspace", () => {
     expect(host.closedPopups).toEqual([id]);
     press(workspace, "ctrl+o", "d");
     expect(workspace.detachRequested).toBe(true);
+  });
+
+  test("opening a project builds its layout in a new tab named after it", () => {
+    const host = new FakeHost();
+    const config = configSchema.parse({
+      projects: { layout: "ide" },
+      layouts: { ide: { row: [{ command: ["dev", "claude"], focus: true }, { column: [{ command: ["remax"] }, {}] }] } },
+    });
+    const workspace = new Workspace(host, "/home", config);
+    press(workspace, "ctrl+t", "o");
+    expect(workspace.prompt?.matches?.map((match) => match.name)).toEqual(["penguin", "penguin-auth", "merlin"]);
+    type(workspace, "pen");
+    press(workspace, "tab");
+    expect(workspace.prompt?.text).toBe("penguin");
+    press(workspace, "return");
+    expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "penguin"]);
+    expect(paneIds(workspace.tab.root)).toEqual([2, 3, 4]);
+    expect(workspace.tab.focused).toBe(2);
+    expect(host.created.slice(1)).toEqual([
+      [2, "/work/exfresso/penguin"],
+      [3, "/work/exfresso/penguin"],
+      [4, "/work/exfresso/penguin"],
+    ]);
+    expect([host.commands.get(2), host.commands.get(3), host.commands.get(4)]).toEqual([["dev", "claude"], ["remax"], undefined]);
+  });
+
+  test("opening a project that already has a tab switches to it", () => {
+    const workspace = new Workspace(new FakeHost());
+    expect(workspace.openProject("merlin")).toBeUndefined();
+    press(workspace, "ctrl+t", "h");
+    expect(workspace.openProject("merl")).toBeUndefined();
+    expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "merlin"]);
+    expect(workspace.active).toBe(1);
+    expect(workspace.openProject("nothing-like-it")).toBe('No project matches "nothing-like-it"');
   });
 
   test("resize mode grows the focused pane", () => {

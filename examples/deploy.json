@@ -1,0 +1,15 @@
+{
+  "title": "Deploy checkout-service",
+  "description": "The build passed. A few choices before I ship it.",
+  "elements": [
+    { "type": "choice", "id": "env", "label": "Where should it go?", "options": [
+      { "value": "staging", "description": "safe, resets nightly" },
+      { "value": "prod", "description": "customers will see it" }
+    ], "default": "staging" },
+    { "type": "confirm", "id": "migrate", "label": "Run database migrations?", "default": true },
+    { "type": "text", "id": "reason", "label": "Why ship to prod today?", "required": true, "when": "selected(env, \"prod\")" },
+    { "type": "choice", "id": "notify", "label": "Who should I notify?", "options": ["#deploys", "#oncall", "the reviewer"], "multi": true, "default": ["#deploys"] },
+    { "type": "number", "id": "canary", "label": "Canary percentage", "min": 0, "max": 100, "step": 5, "default": 10 },
+    { "type": "note", "text": "You can cancel with Esc; I will not deploy." }
+  ]
+}

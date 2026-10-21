@@ -56,7 +56,8 @@ export class MuxView {
       if (!pane) continue;
       const title = this.stackTitles.get(id);
       if (title) title.content = styled([fg(theme.muted)(` ▸ ${this.paneTitle(id, pane)}`)]);
-      pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup);
+      const mode = this.workspace.mode;
+      pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup, mode === "normal" ? theme.accent : theme.modes[mode]);
     }
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();

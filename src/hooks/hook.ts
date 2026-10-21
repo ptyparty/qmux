@@ -94,18 +94,70 @@ export function permissionDecision(input: PermissionInput, answer: PermissionAns
   }
 }
 
-export async function askPermission(pane: QmuxPane, input: PermissionInput, store = new AskStore()): Promise<object | undefined> {
-  await reportState(pane, "waiting", `Claude wants to use ${input.tool_name}`);
+export async function askPermission(pane: QmuxPane, input: PermissionInput): Promise<object | undefined> {
+  const values = await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`);
+  return values && permissionDecision(input, values);
+}
+
+export type ClaudeQuestion = { question: string; header?: string; options: { label: string; description?: string }[]; multiSelect?: boolean };
+
+export type QuestionInput = { hook_event_name: "PreToolUse"; tool_name: "AskUserQuestion"; tool_input: { questions: ClaudeQuestion[] } };
+
+export function questionForm(questions: ClaudeQuestion[]): FormSpec {
+  return {
+    title: questions[0]?.header ? `Claude asks: ${questions[0].header}` : "Claude has a question",
+    elements: questions.map((question, index) => ({
+      type: "choice" as const,
+      id: `q${index}`,
+      label: question.question,
+      multi: Boolean(question.multiSelect),
+      required: true,
+      options: uniqueBy(question.options, (option) => option.label).map((option) => ({ value: option.label, label: option.label, description: option.description })),
+    })),
+    submitLabel: "Answer",
+  };
+}
+
+export function questionAnswers(questions: ClaudeQuestion[], values: Record<string, unknown>): Record<string, string> {
+  const answers: Record<string, string> = {};
+  questions.forEach((question, index) => {
+    const value = values[`q${index}`];
+    if (Array.isArray(value)) answers[question.question] = value.join(", ");
+    else if (typeof value === "string") answers[question.question] = value;
+  });
+  return answers;
+}
+
+export async function askQuestions(pane: QmuxPane, input: QuestionInput): Promise<object | undefined> {
+  const questions = input.tool_input.questions ?? [];
+  if (questions.length === 0) return undefined;
+  const values = await askInPopup(pane, questionForm(questions), "Claude has a question");
+  if (!values) return undefined;
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      updatedInput: { ...input.tool_input, answers: questionAnswers(questions, values) },
+    },
+  };
+}
+
+async function askInPopup(pane: QmuxPane, spec: FormSpec, waitingFor: string): Promise<Record<string, unknown> | undefined> {
+  await reportState(pane, "waiting", waitingFor);
   let outcome;
   try {
-    outcome = await ask(store, permissionForm(input), "qmux", Number.POSITIVE_INFINITY);
+    outcome = await ask(new AskStore(), spec, "qmux", Number.POSITIVE_INFINITY);
   } catch {
     return undefined;
   }
   if (outcome.status.status !== "submitted") return undefined;
-  const decision = permissionDecision(input, outcome.status.values);
-  if (decision) await reportState(pane, "working");
-  return decision;
+  await reportState(pane, "working");
+  return outcome.status.values;
+}
+
+function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => !seen.has(key(item)) && seen.add(key(item)));
 }
 
 export async function runHook(stdin: string, env: Record<string, string | undefined>): Promise<string | undefined> {
@@ -120,6 +172,10 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
   if (input.hook_event_name === "PermissionRequest") {
     const decision = await askPermission(pane, input as unknown as PermissionInput);
     return decision ? JSON.stringify(decision) : undefined;
+  }
+  if (input.hook_event_name === "PreToolUse" && input.tool_name === "AskUserQuestion") {
+    const answer = await askQuestions(pane, input as unknown as QuestionInput);
+    return answer ? JSON.stringify(answer) : undefined;
   }
   const update = stateForEvent(input);
   if (update) await reportState(pane, update.state, update.detail);

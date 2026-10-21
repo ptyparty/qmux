@@ -88,6 +88,7 @@ describe("Workspace", () => {
     expect(host.created.at(-1)).toEqual([2, "/work/1"]);
     press(workspace, "alt+h");
     expect(workspace.tab.focused).toBe(1);
+    expect(workspace.message).toBe("Focus moved by Alt+h");
     press(workspace, "alt+s");
     expect(workspace.tab.focused).toBe(2);
     press(workspace, "alt+o");

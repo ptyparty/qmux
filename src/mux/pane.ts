@@ -82,11 +82,11 @@ export class Pane {
     return `${base} · exited${this.exitCode === null ? "" : ` ${this.exitCode}`}`;
   }
 
-  show(title: string, focused: boolean): void {
+  show(title: string, focused: boolean, focusColor: string = theme.accent): void {
     if (!this.options.frameless) {
       this.frame.title = ` ${title} `;
-      this.frame.borderColor = focused ? theme.accent : theme.border;
-      this.frame.titleColor = this.exited ? theme.warning : focused ? theme.accent : theme.muted;
+      this.frame.borderColor = focused ? focusColor : theme.border;
+      this.frame.titleColor = this.exited ? theme.warning : focused ? focusColor : theme.muted;
     }
     if (focused) {
       this.view.focus();

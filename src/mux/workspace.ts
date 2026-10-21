@@ -157,8 +157,13 @@ export class Workspace {
     }
     const binding = lookup(this.mode, key);
     if (binding) {
+      const before = `${this.active}:${this.tab.focused}`;
+      const mode = this.mode;
       this.run(binding.command);
       if (binding.then) this.mode = binding.then;
+      if (mode === "normal" && this.tabs.length > 0 && before !== `${this.active}:${this.tab.focused}` && !this.message) {
+        this.message = `Focus moved by ${keyLabel(keyName(key))}`;
+      }
       return true;
     }
     if ((this.mode === "normal" || this.mode === "locked") && this.host.isHeld(this.tab.focused)) return this.heldKey(key);
@@ -398,6 +403,13 @@ export class Workspace {
       }
     }
   }
+}
+
+function keyLabel(name: string): string {
+  return name
+    .split("+")
+    .map((part) => (part.length > 1 ? part[0]!.toUpperCase() + part.slice(1) : part))
+    .join("+");
 }
 
 function wrap(index: number, length: number): number {

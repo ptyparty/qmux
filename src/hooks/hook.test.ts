@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskStore } from "../ask/store.ts";
 import { serveControl, type ControlRequest } from "../mux/control.ts";
-import { permissionDecision, permissionForm, runHook, stateForEvent, type PermissionInput } from "./hook.ts";
+import { permissionDecision, permissionForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-hook-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -50,6 +50,20 @@ describe("qmux hook", () => {
     expect(permissionDecision(bash, { decision: "always" })).toEqual(wrap({ behavior: "allow", updatedPermissions: [bash.permission_suggestions![0]] }));
     expect(permissionDecision(bash, { decision: "deny", reason: " too risky " })).toEqual(wrap({ behavior: "deny", message: "too risky" }));
     expect(permissionDecision(bash, { decision: "deny" })).toEqual(wrap({ behavior: "deny", message: "The user denied this in qmux" }));
+  });
+
+  test("Claude's questions become a form and its answers come back keyed by question", () => {
+    const questions: ClaudeQuestion[] = [
+      { question: "Which framework?", header: "Framework", options: [{ label: "React", description: "Components" }, { label: "Vue" }], multiSelect: false },
+      { question: "Which checks?", options: [{ label: "lint" }, { label: "test" }], multiSelect: true },
+    ];
+    const form = questionForm(questions);
+    expect(form.title).toBe("Claude asks: Framework");
+    expect(form.elements).toMatchObject([
+      { type: "choice", id: "q0", label: "Which framework?", multi: false, options: [{ value: "React", description: "Components" }, { value: "Vue" }] },
+      { type: "choice", id: "q1", multi: true },
+    ]);
+    expect(questionAnswers(questions, { q0: "Svelte", q1: ["lint", "test"] })).toEqual({ "Which framework?": "Svelte", "Which checks?": "lint, test" });
   });
 
   test("does nothing outside qmux", async () => {

@@ -12,6 +12,8 @@ claude mcp add qmux -- qmux mcp # gives Claude Code the ask and wait tools
 
 Copy or symlink `skills/qmux-ask` into `~/.claude/skills/` so agents know when and how to ask.
 
+The `ask` and `wait` tools are marked read-only, so Claude Code can use them in plan mode without asking permission.
+
 ## Usage
 
 ```bash

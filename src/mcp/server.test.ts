@@ -33,6 +33,11 @@ describe("MCP server", () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual(["ask", "wait"]);
   });
 
+  test("marks both tools read-only so plan mode does not prompt for them", async () => {
+    const { tools } = await client.listTools();
+    for (const tool of tools) expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+  });
+
   test("ask returns pending, and wait returns the answer", async () => {
     const asked = await client.callTool({ name: "ask", arguments: { form, host: "none", wait_seconds: 0 } });
     expect(asked.structuredContent).toMatchObject({ host: "none", status: "pending" });

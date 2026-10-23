@@ -353,7 +353,7 @@ class ChoiceView extends InputView {
       if (index > 0) lines.push("\n");
       lines.push(atCursor ? fg(palette.accent)("  › ") : "    ", marker(chosen, Boolean(this.element.multi)), " ");
       lines.push(atCursor ? bold(row.option.label) : row.option.label);
-      if (row.option.description) lines.push(fg(palette.muted)(`  ${row.option.description}`));
+      if (row.option.description) lines.push("\n", fg(palette.muted)(`      ${row.option.description}`));
     });
     this.rows.content = styled(lines);
     this.other.visible = state.otherSelected;

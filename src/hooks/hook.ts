@@ -169,6 +169,10 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
   } catch {
     return undefined;
   }
+  if (input.hook_event_name === "PermissionRequest" && input.tool_name === "ExitPlanMode") {
+    await reportState(pane, "waiting", "Claude has a plan for you to review");
+    return undefined;
+  }
   if (input.hook_event_name === "PermissionRequest") {
     const decision = await askPermission(pane, input as unknown as PermissionInput);
     return decision ? JSON.stringify(decision) : undefined;

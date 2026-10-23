@@ -66,6 +66,22 @@ describe("qmux hook", () => {
     expect(questionAnswers(questions, { q0: "Svelte", q1: ["lint", "test"] })).toEqual({ "Which framework?": "Svelte", "Which checks?": "lint, test" });
   });
 
+  test("plan approval is left to Claude's own dialog", async () => {
+    const socket = join(dir, "plan.sock");
+    const requests: ControlRequest[] = [];
+    const server = serveControl(socket, (request) => {
+      requests.push(request);
+      return { ok: true };
+    });
+    try {
+      const output = await runHook(JSON.stringify({ hook_event_name: "PermissionRequest", tool_name: "ExitPlanMode", tool_input: { plan: "# Plan" } }), { QMUX_SOCKET: socket, QMUX_PANE_ID: "3" });
+      expect(output).toBeUndefined();
+    } finally {
+      server.stop();
+    }
+    expect(requests).toEqual([{ method: "agent.state", params: { paneId: 3, state: "waiting", detail: "Claude has a plan for you to review" } }]);
+  });
+
   test("does nothing outside qmux", async () => {
     expect(await runHook(JSON.stringify({ hook_event_name: "Stop" }), {})).toBeUndefined();
   });

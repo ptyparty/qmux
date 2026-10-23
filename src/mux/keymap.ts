@@ -1,6 +1,6 @@
 import type { Axis, Direction } from "./layout.ts";
 
-export type Mode = "normal" | "locked" | "pane" | "tab" | "resize" | "session";
+export type Mode = "normal" | "locked" | "pane" | "tab" | "session";
 
 export type Command =
   | { type: "mode"; mode: Mode }
@@ -18,7 +18,6 @@ export type Command =
   | { type: "cycle-tab"; delta: number }
   | { type: "move-tab"; delta: number }
   | { type: "go-to-tab"; index: number }
-  | { type: "resize"; direction: Direction; shrink: boolean }
   | { type: "detach" }
   | { type: "close-popup" }
   | { type: "next-attention" }
@@ -38,7 +37,6 @@ const vim: Record<Direction, string> = { left: "h", down: "j", up: "k", right: "
 const modeSwitches: { key: string; mode: Mode; keys: string; description: string }[] = [
   { key: "ctrl+p", mode: "pane", keys: "^p", description: "pane" },
   { key: "ctrl+t", mode: "tab", keys: "^t", description: "tab" },
-  { key: "ctrl+n", mode: "resize", keys: "^n", description: "resize" },
   { key: "ctrl+o", mode: "session", keys: "^o", description: "session" },
   { key: "ctrl+g", mode: "locked", keys: "^g", description: "lock" },
 ];
@@ -120,17 +118,6 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "1-9", description: "go to" },
       backHint,
     ],
-  },
-  resize: {
-    bindings: [
-      ...directional(dvorak, "", (direction) => ({ type: "resize", direction, shrink: false })),
-      ...(Object.entries(dvorak) as [Direction, string][]).map(([direction, letter]): Binding => ({
-        keys: [`shift+${letter}`],
-        command: { type: "resize", direction, shrink: true },
-      })),
-      backToNormal,
-    ],
-    hints: [{ keys: "h/t/n/s ←↑↓→", description: "move border" }, { keys: "H/T/N/S", description: "shrink" }, backHint],
   },
   session: {
     bindings: [

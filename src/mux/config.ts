@@ -5,27 +5,24 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { leaf, type LayoutNode, type PaneId } from "./layout.ts";
 
-export type PaneSpec = { command?: string[]; name?: string; focus?: boolean; size?: number };
-export type SplitSpec = { row: LayoutSpec[]; size?: number } | { column: LayoutSpec[]; size?: number };
-export type TabsSpec = { tabs: PaneSpec[]; size?: number };
+export type PaneSpec = { command?: string[]; name?: string; focus?: boolean };
+export type SplitSpec = { row: LayoutSpec[] } | { column: LayoutSpec[] };
+export type TabsSpec = { tabs: PaneSpec[] };
 export type LayoutSpec = PaneSpec | SplitSpec | TabsSpec;
-
-const size = z.number().positive().optional().describe("Share of the parent split, relative to its siblings (default 1)");
 
 const paneSpec = z
   .object({
     command: z.array(z.string()).min(1).optional().describe("Program and arguments; defaults to $SHELL"),
     name: z.string().optional(),
     focus: z.boolean().optional(),
-    size,
   })
   .strict();
 
 const layoutSpec: z.ZodType<LayoutSpec> = z.lazy(() =>
   z.union([
-    z.object({ row: z.array(layoutSpec).min(1), size }).strict(),
-    z.object({ column: z.array(layoutSpec).min(1), size }).strict(),
-    z.object({ tabs: z.array(paneSpec).min(1), size }).strict(),
+    z.object({ row: z.array(layoutSpec).min(1) }).strict(),
+    z.object({ column: z.array(layoutSpec).min(1) }).strict(),
+    z.object({ tabs: z.array(paneSpec).min(1) }).strict(),
     paneSpec,
   ]),
 );
@@ -88,8 +85,7 @@ export function planLayout(spec: LayoutSpec, allocate: () => PaneId): { root: La
     if ("row" in node || "column" in node) {
       const axis = "row" in node ? "row" : "column";
       const children = "row" in node ? node.row : node.column;
-      const total = children.reduce((sum, child) => sum + (child.size ?? 1), 0);
-      return { kind: "split", axis, children: children.map((child) => ({ node: build(child), weight: (child.size ?? 1) / total })) };
+      return { kind: "split", axis, children: children.map(build) };
     }
     return leaf(addPane(node));
   };

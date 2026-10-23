@@ -4,15 +4,12 @@ export type Direction = "left" | "right" | "up" | "down";
 
 export type LayoutNode =
   | { kind: "pane"; id: PaneId }
-  | { kind: "split"; axis: Axis; children: WeightedNode[] }
+  | { kind: "split"; axis: Axis; children: LayoutNode[] }
   | { kind: "tabs"; panes: PaneId[]; selected: number };
-
-export type WeightedNode = { node: LayoutNode; weight: number };
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
 const epsilon = 1e-9;
-const minimumWeight = 0.05;
 
 export function leaf(id: PaneId): LayoutNode {
   return { kind: "pane", id };
@@ -23,12 +20,10 @@ export function splitPane(root: LayoutNode, target: PaneId, axis: Axis, added: P
     inSplit: (split, index) => {
       if (split.axis !== axis) return undefined;
       const children = [...split.children];
-      const half = children[index]!.weight / 2;
-      children[index] = { ...children[index]!, weight: half };
-      children.splice(index + 1, 0, { node: leaf(added), weight: half });
+      children.splice(index + 1, 0, leaf(added));
       return { ...split, children };
     },
-    atPane: (pane) => ({ kind: "split", axis, children: [{ node: pane, weight: 0.5 }, { node: leaf(added), weight: 0.5 }] }),
+    atPane: (pane) => ({ kind: "split", axis, children: [pane, leaf(added)] }),
   });
 }
 
@@ -60,6 +55,13 @@ export function selectPaneTab(root: LayoutNode, target: PaneId): LayoutNode {
   return replaceNode(root, group, { ...group, selected: group.panes.indexOf(target) });
 }
 
+export function paneTabSibling(root: LayoutNode, target: PaneId): PaneId | undefined {
+  const group = findTabs(root, (candidate) => candidate.panes.includes(target));
+  if (!group) return undefined;
+  const index = group.panes.indexOf(target);
+  return group.panes[index + 1] ?? group.panes[index - 1];
+}
+
 export function removePane(root: LayoutNode, target: PaneId): LayoutNode | null {
   if (root.kind === "pane") return root.id === target ? null : root;
   if (root.kind === "tabs") {
@@ -71,12 +73,10 @@ export function removePane(root: LayoutNode, target: PaneId): LayoutNode | null 
     const selected = index < root.selected ? root.selected - 1 : Math.min(root.selected, panes.length - 1);
     return { kind: "tabs", panes, selected };
   }
-  const children = root.children
-    .map((child) => ({ ...child, node: removePane(child.node, target) }))
-    .filter((child): child is WeightedNode => child.node !== null);
+  const children = root.children.map((child) => removePane(child, target)).filter((child): child is LayoutNode => child !== null);
   if (children.length === 0) return null;
-  if (children.length === 1) return children[0]!.node;
-  return { ...root, children: normalize(children) };
+  if (children.length === 1) return children[0]!;
+  return { ...root, children };
 }
 
 export function paneIds(root: LayoutNode): PaneId[] {
@@ -86,7 +86,7 @@ export function paneIds(root: LayoutNode): PaneId[] {
     case "tabs":
       return root.panes;
     case "split":
-      return root.children.flatMap((child) => paneIds(child.node));
+      return root.children.flatMap(paneIds);
   }
 }
 
@@ -94,15 +94,14 @@ export function paneRects(root: LayoutNode, rect: Rect = { x: 0, y: 0, width: 1,
   if (root.kind === "pane") return new Map([[root.id, rect]]);
   if (root.kind === "tabs") return groupRects(root, rect);
   const rects = new Map<PaneId, Rect>();
-  let offset = 0;
-  for (const child of root.children) {
+  const share = 1 / root.children.length;
+  root.children.forEach((child, index) => {
     const childRect =
       root.axis === "row"
-        ? { x: rect.x + offset * rect.width, y: rect.y, width: child.weight * rect.width, height: rect.height }
-        : { x: rect.x, y: rect.y + offset * rect.height, width: rect.width, height: child.weight * rect.height };
-    offset += child.weight;
-    for (const [id, paneRect] of paneRects(child.node, childRect)) rects.set(id, paneRect);
-  }
+        ? { x: rect.x + index * share * rect.width, y: rect.y, width: share * rect.width, height: rect.height }
+        : { x: rect.x, y: rect.y + index * share * rect.height, width: rect.width, height: share * rect.height };
+    for (const [id, paneRect] of paneRects(child, childRect)) rects.set(id, paneRect);
+  });
   return rects;
 }
 
@@ -123,36 +122,6 @@ export function neighbor(root: LayoutNode, from: PaneId, direction: Direction): 
   return best?.id;
 }
 
-export function growPane(root: LayoutNode, target: PaneId, direction: Direction, step: number): LayoutNode {
-  return transfer(root, target, direction, step) ?? transfer(root, target, opposite(direction), -step) ?? root;
-}
-
-export function shrinkPane(root: LayoutNode, target: PaneId, direction: Direction, step: number): LayoutNode {
-  return transfer(root, target, direction, -step) ?? root;
-}
-
-function transfer(root: LayoutNode, target: PaneId, direction: Direction, amount: number): LayoutNode | undefined {
-  const axis: Axis = direction === "left" || direction === "right" ? "row" : "column";
-  const towardStart = direction === "left" || direction === "up";
-  const path = pathTo(root, target);
-  for (let depth = path.length - 1; depth >= 0; depth--) {
-    const { split, index } = path[depth]!;
-    if (split.axis !== axis) continue;
-    const other = towardStart ? index - 1 : index + 1;
-    if (other < 0 || other >= split.children.length) continue;
-    const giver = amount > 0 ? split.children[other]! : split.children[index]!;
-    const moved = Math.sign(amount) * Math.min(Math.abs(amount), giver.weight - minimumWeight);
-    if (moved === 0 || Math.sign(moved) !== Math.sign(amount)) return root;
-    const children = split.children.map((child, position) => {
-      if (position === index) return { ...child, weight: child.weight + moved };
-      if (position === other) return { ...child, weight: child.weight - moved };
-      return child;
-    });
-    return replaceNode(root, split, { ...split, children });
-  }
-  return undefined;
-}
-
 function groupRects(group: TabsNode, rect: Rect): Map<PaneId, Rect> {
   const width = rect.width / group.panes.length;
   return new Map(group.panes.map((id, index) => [id, { x: rect.x + index * width, y: rect.y, width, height: rect.height }]));
@@ -162,7 +131,7 @@ function findTabs(root: LayoutNode, matches: (group: TabsNode) => boolean): Tabs
   if (root.kind === "tabs") return matches(root) ? root : undefined;
   if (root.kind === "pane") return undefined;
   for (const child of root.children) {
-    const found = findTabs(child.node, matches);
+    const found = findTabs(child, matches);
     if (found) return found;
   }
   return undefined;
@@ -170,15 +139,6 @@ function findTabs(root: LayoutNode, matches: (group: TabsNode) => boolean): Tabs
 
 function holds(node: LayoutNode, target: PaneId): boolean {
   return (node.kind === "pane" && node.id === target) || (node.kind === "tabs" && node.panes.includes(target));
-}
-
-function opposite(direction: Direction): Direction {
-  return ({ left: "right", right: "left", up: "down", down: "up" } as const)[direction];
-}
-
-function normalize(children: WeightedNode[]): WeightedNode[] {
-  const total = children.reduce((sum, child) => sum + child.weight, 0);
-  return children.map((child) => ({ ...child, weight: child.weight / total }));
 }
 
 type SplitNode = Extract<LayoutNode, { kind: "split" }>;
@@ -191,27 +151,18 @@ function mapPaneParent(
   handlers: { inSplit: (split: SplitNode, index: number) => LayoutNode | undefined; atPane: (node: PaneNode | TabsNode) => LayoutNode },
 ): LayoutNode {
   if (root.kind !== "split") return holds(root, target) ? handlers.atPane(root) : root;
-  const index = root.children.findIndex((child) => holds(child.node, target));
+  const index = root.children.findIndex((child) => holds(child, target));
   if (index >= 0) {
     const replaced = handlers.inSplit(root, index);
     if (replaced) return replaced;
   }
-  return { ...root, children: root.children.map((child) => ({ ...child, node: mapPaneParent(child.node, target, handlers) })) };
-}
-
-function pathTo(root: LayoutNode, target: PaneId): { split: SplitNode; index: number }[] {
-  if (root.kind !== "split") return [];
-  for (const [index, child] of root.children.entries()) {
-    if (!paneIds(child.node).includes(target)) continue;
-    return [{ split: root, index }, ...pathTo(child.node, target)];
-  }
-  return [];
+  return { ...root, children: root.children.map((child) => mapPaneParent(child, target, handlers)) };
 }
 
 function replaceNode(root: LayoutNode, from: LayoutNode, to: LayoutNode): LayoutNode {
   if (root === from) return to;
   if (root.kind !== "split") return root;
-  return { ...root, children: root.children.map((child) => ({ ...child, node: replaceNode(child.node, from, to) })) };
+  return { ...root, children: root.children.map((child) => replaceNode(child, from, to)) };
 }
 
 function touches(origin: Rect, rect: Rect, direction: Direction): boolean {

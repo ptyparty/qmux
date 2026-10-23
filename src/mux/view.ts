@@ -76,8 +76,8 @@ export class MuxView {
     for (const child of this.body.getChildren()) child.destroyRecursively();
     this.paneTabStrips = [];
     const zoomedPane = zoomed === undefined ? undefined : this.panes.get(zoomed);
-    if (zoomedPane) this.body.add(this.slot(zoomedPane.frame, 1));
-    else this.body.add(this.build(root, 1));
+    if (zoomedPane) this.body.add(this.slot(zoomedPane.frame));
+    else this.body.add(this.build(root));
   }
 
   private renderOverlay(): boolean {
@@ -96,25 +96,19 @@ export class MuxView {
     return true;
   }
 
-  private build(node: LayoutNode, weight: number): BoxRenderable {
+  private build(node: LayoutNode): BoxRenderable {
     if (node.kind === "pane") {
       const pane = this.panes.get(node.id);
-      return pane ? this.slot(pane.frame, weight) : new BoxRenderable(this.renderer, { flexGrow: weight, flexBasis: 0 });
+      return pane ? this.slot(pane.frame) : new BoxRenderable(this.renderer, { flexGrow: 1, flexBasis: 0 });
     }
-    if (node.kind === "tabs") return this.buildTabs(node, weight);
-    const container = new BoxRenderable(this.renderer, {
-      flexDirection: node.axis,
-      flexGrow: weight,
-      flexBasis: 0,
-      minWidth: 0,
-      minHeight: 0,
-    });
-    for (const child of node.children) container.add(this.build(child.node, child.weight));
+    if (node.kind === "tabs") return this.buildTabs(node);
+    const container = new BoxRenderable(this.renderer, { flexDirection: node.axis, flexGrow: 1, flexBasis: 0, minWidth: 0, minHeight: 0 });
+    for (const child of node.children) container.add(this.build(child));
     return container;
   }
 
-  private buildTabs(group: TabsNode, weight: number): BoxRenderable {
-    const container = new BoxRenderable(this.renderer, { flexDirection: "column", flexGrow: weight, flexBasis: 0, minWidth: 0, minHeight: 0 });
+  private buildTabs(group: TabsNode): BoxRenderable {
+    const container = new BoxRenderable(this.renderer, { flexDirection: "column", flexGrow: 1, flexBasis: 0, minWidth: 0, minHeight: 0 });
     const strip = new TextRenderable(this.renderer, { height: 1, flexShrink: 0, bg: theme.surface, wrapMode: "none" });
     const entry = { strip, group, ranges: [] as { start: number; end: number; id: PaneId }[] };
     strip.onMouseDown = (event) => {
@@ -125,7 +119,7 @@ export class MuxView {
     this.paneTabStrips.push(entry);
     container.add(strip);
     const shown = this.panes.get(group.panes[shownPaneTab(group, this.workspace.tab.focused)]!);
-    if (shown) container.add(this.slot(shown.frame, 1));
+    if (shown) container.add(this.slot(shown.frame));
     return container;
   }
 
@@ -156,8 +150,8 @@ export class MuxView {
     }
   }
 
-  private slot(frame: BoxRenderable, weight: number): BoxRenderable {
-    const slot = new BoxRenderable(this.renderer, { flexGrow: weight, flexBasis: 0, minWidth: 0, minHeight: 0 });
+  private slot(frame: BoxRenderable): BoxRenderable {
+    const slot = new BoxRenderable(this.renderer, { flexGrow: 1, flexBasis: 0, minWidth: 0, minHeight: 0 });
     slot.add(frame);
     return slot;
   }

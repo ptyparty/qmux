@@ -100,7 +100,7 @@ describe("Workspace", () => {
     press(workspace, "ctrl+p", "n");
     expect(workspace.tab.root).toMatchObject({ kind: "split", axis: "row" });
     press(workspace, "ctrl+p", "n");
-    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { kind: "split", axis: "column" } }] });
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { kind: "split", axis: "column" }] });
   });
 
   test("modes swallow unbound keys", () => {
@@ -272,16 +272,16 @@ describe("Workspace", () => {
     });
     const workspace = new Workspace(new FakeHost(), "/home", config);
     workspace.openProject("merlin");
-    expect(workspace.tab.root).toMatchObject({ children: [{ node: { id: 2 } }, { node: { kind: "tabs", panes: [3, 4], selected: 0 } }] });
+    expect(workspace.tab.root).toMatchObject({ children: [{ id: 2 }, { kind: "tabs", panes: [3, 4], selected: 0 }] });
     press(workspace, "alt+s", "alt+s");
     expect(workspace.tab.focused).toBe(4);
-    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { selected: 1 } }] });
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { selected: 1 }] });
     press(workspace, "ctrl+p", "n");
-    expect(workspace.tab.root).toMatchObject({ children: [{}, { node: { panes: [3, 4, 5], selected: 2 } }] });
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { panes: [3, 4, 5], selected: 2 }] });
     press(workspace, "alt+h", "alt+h");
     expect(workspace.tab.focused).toBe(3);
     press(workspace, "alt+h", "ctrl+p", "s");
-    expect(workspace.tab.root).toMatchObject({ children: [{ node: { kind: "tabs", panes: [2, 6], selected: 1 } }, {}] });
+    expect(workspace.tab.root).toMatchObject({ children: [{ kind: "tabs", panes: [2, 6], selected: 1 }, {}] });
   });
 
   test("the project launcher selects matches with the arrow keys", () => {
@@ -386,11 +386,9 @@ describe("Workspace", () => {
     });
   });
 
-  test("resize mode grows the focused pane", () => {
+  test("there is no resize mode", () => {
     const workspace = new Workspace(new FakeHost());
-    press(workspace, "ctrl+p", "r", "ctrl+n", "h", "h", "shift+h");
-    const root = workspace.tab.root as { children: { weight: number }[] };
-    expect(root.children[0]!.weight).toBeCloseTo(0.45);
-    expect(root.children[1]!.weight).toBeCloseTo(0.55);
+    expect(press(workspace, "ctrl+n")).toEqual([false]);
+    expect(workspace.mode).toBe("normal");
   });
 });

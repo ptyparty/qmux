@@ -1,4 +1,4 @@
-import { addToFirstTabs, selectPaneTab, growPane, leaf, neighbor, paneIds, paneRects, removePane, shrinkPane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { addToFirstTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { defaultConfig, planLayout, type Config, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
@@ -36,7 +36,6 @@ export interface PaneHost {
 
 export type InputKey = Key & { sequence: string };
 
-const resizeStep = 0.05;
 const popupPassthrough = new Set(["ctrl+t", "ctrl+o"]);
 const shownMatches = 6;
 
@@ -276,9 +275,6 @@ export class Workspace {
         return this.moveTab(command.delta);
       case "go-to-tab":
         if (command.index < this.tabs.length) this.active = command.index;
-        return;
-      case "resize":
-        this.tab.root = (command.shrink ? shrinkPane : growPane)(this.tab.root, this.tab.focused, command.direction, resizeStep);
         return;
       case "detach":
         this.detachRequested = true;

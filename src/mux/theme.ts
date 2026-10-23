@@ -11,7 +11,6 @@ export const theme = {
     locked: "#e82424",
     pane: "#7aa89f",
     tab: "#c4a7e7",
-    resize: "#ffa066",
     session: "#e6c384",
   },
 } as const;

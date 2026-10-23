@@ -59,22 +59,22 @@ describe("config", () => {
       kind: "split",
       axis: "row",
       children: [
-        { node: { kind: "pane", id: 1 }, weight: 0.5 },
-        { node: { kind: "tabs", panes: [2, 3], selected: 0 }, weight: 0.5 },
+        { kind: "pane", id: 1 },
+        { kind: "tabs", panes: [2, 3], selected: 0 },
       ],
     });
   });
 
-  test("a focused stack member is the one the stack shows", () => {
+  test("a focused pane tab is the one its group shows", () => {
     let next = 1;
     const plan = planLayout({ tabs: [{}, { focus: true }] }, () => next++);
     expect(plan.root).toEqual({ kind: "tabs", panes: [1, 2], selected: 1 });
     expect(plan.focus).toBe(2);
   });
 
-  test("planning a layout allocates panes, honours sizes, and picks the focus", () => {
+  test("planning a layout allocates panes, shares space equally, and picks the focus", () => {
     let next = 10;
-    const plan = planLayout({ row: [{ command: ["dev", "claude"], size: 2 }, { column: [{ command: ["remax"] }, { focus: true }] }] }, () => next++);
+    const plan = planLayout({ row: [{ command: ["dev", "claude"] }, { column: [{ command: ["remax"] }, { focus: true }] }] }, () => next++);
     expect(plan.panes).toEqual([
       { id: 10, command: ["dev", "claude"], name: undefined },
       { id: 11, command: ["remax"], name: undefined },
@@ -82,7 +82,7 @@ describe("config", () => {
     ]);
     expect(plan.focus).toBe(12);
     const rects = paneRects(plan.root);
-    expect(rects.get(10)!.width).toBeCloseTo(2 / 3);
+    expect(rects.get(10)!.width).toBeCloseTo(1 / 2);
     expect(rects.get(12)).toMatchObject({ y: 0.5, height: 0.5 });
   });
 });

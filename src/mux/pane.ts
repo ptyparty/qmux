@@ -1,10 +1,11 @@
-import { BoxRenderable, EmbeddedTerminalRenderable, type CliRenderer } from "@opentui/core";
+import { BoxRenderable, EmbeddedTerminalRenderable, type CliRenderer, type MouseEvent } from "@opentui/core";
 import { readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import type { PaneId } from "./layout.ts";
 import { Pty, type ReadScheduler } from "./pty.ts";
 import { theme } from "./theme.ts";
+import { wordAt } from "./words.ts";
 
 export type CommandEvent = { kind: "started" } | { kind: "finished"; code: number };
 
@@ -27,6 +28,7 @@ const resetTerminal = "\x1bc";
 const fishIntegration = new URL("../shell/qmux.fish", import.meta.url).pathname;
 const commandMark = /\x1b\]133;([CD])(?:;(-?\d+))?(?:\x07|\x1b\\)/g;
 const markTailLength = 32;
+const doubleClickMs = 400;
 
 export class Pane {
   readonly frame: BoxRenderable;
@@ -36,9 +38,10 @@ export class Pane {
   private exitCode: number | null | undefined;
   private command: string[] | undefined;
   private markTail = "";
+  private lastClick = { at: 0, x: -1, y: -1 };
 
   constructor(
-    renderer: CliRenderer,
+    private readonly renderer: CliRenderer,
     readonly id: PaneId,
     private readonly options: PaneOptions,
     private readonly scheduler: ReadScheduler,
@@ -48,6 +51,7 @@ export class Pane {
       width: "100%",
       height: "100%",
       selectable: true,
+      onMouseDown: (event) => this.clicked(event),
       onData: (data) => this.pty.write(data),
       onTerminalResize: (cols, rows) => {
         this.size = { cols, rows };
@@ -156,6 +160,18 @@ export class Pane {
       this.view.write(`\r\n\x1b[0m\x1b[2m[${status} · Enter re-run · Esc shell · Ctrl+c close]\x1b[0m`);
       this.events.onHeld(this.id);
     });
+  }
+
+  private clicked(event: MouseEvent): void {
+    if (event.button !== 0) return;
+    const now = performance.now();
+    const double = now - this.lastClick.at < doubleClickMs && event.x === this.lastClick.x && event.y === this.lastClick.y;
+    this.lastClick = double ? { at: 0, x: -1, y: -1 } : { at: now, x: event.x, y: event.y };
+    if (!double || !this.view.shouldStartSelection(event.x, event.y)) return;
+    const bounds = wordAt(this.view.screen().lines[event.y - this.view.screenY] ?? "", event.x - this.view.screenX);
+    if (!bounds) return;
+    this.renderer.startSelection(this.view, this.view.screenX + bounds.start, event.y);
+    this.renderer.updateSelection(this.view, this.view.screenX + bounds.end, event.y);
   }
 
   private scanCommandMarks(data: Uint8Array): void {

@@ -21,6 +21,7 @@ export type Command =
   | { type: "detach" }
   | { type: "close-popup" }
   | { type: "next-attention" }
+  | { type: "last-tab" }
   | { type: "quit" };
 
 export type Binding = { keys: string[]; command: Command; then?: Mode };
@@ -105,6 +106,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["x"], command: { type: "close-tab" }, then: "normal" },
       { keys: ["r"], command: { type: "rename-tab" }, then: "normal" },
       { keys: ["o"], command: { type: "open-project" }, then: "normal" },
+      { keys: ["a"], command: { type: "last-tab" }, then: "normal" },
       ...Array.from({ length: 9 }, (_, index): Binding => ({ keys: [String(index + 1)], command: { type: "go-to-tab", index }, then: "normal" })),
       backToNormal,
     ],
@@ -115,6 +117,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "x", description: "close" },
       { keys: "r", description: "rename" },
       { keys: "o", description: "open project" },
+      { keys: "a", description: "last tab" },
       { keys: "1-9", description: "go to" },
       backHint,
     ],

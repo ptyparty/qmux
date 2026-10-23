@@ -1,16 +1,17 @@
-import { addToFirstTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { addToFirstTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { defaultConfig, planLayout, type Config, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
 
-export type Popup = { id: PaneId; title: string; tabId: number };
+export type Popup = { id: PaneId; title: string; tabId: number; askingPane?: PaneId };
 
-export const agentStates = ["working", "waiting", "done"] as const;
+export const agentStates = ["working", "waiting", "done", "failed"] as const;
 export type AgentState = (typeof agentStates)[number];
 
-const urgency: Record<AgentState, number> = { waiting: 3, done: 2, working: 1 };
+const urgency: Record<AgentState, number> = { waiting: 4, failed: 3, done: 2, working: 1 };
+const popupDelayMs = 1500;
 
 export type Prompt = {
   kind: "rename-tab" | "rename-pane" | "close-tab" | "open-project";
@@ -53,13 +54,19 @@ export class Workspace {
   readonly agents = new Map<PaneId, AgentState>();
   private nextPaneId = 1;
   private nextTabNumber = 1;
+  private lastKeyAt = Number.NEGATIVE_INFINITY;
+  private readonly shownPopups = new Set<PaneId>();
+  private currentTabId: number | undefined;
+  private previousTabId: number | undefined;
 
   constructor(
     private readonly host: PaneHost,
     initialCwd?: string,
     private readonly config: Config = defaultConfig,
+    private readonly now: () => number = Date.now,
   ) {
     this.openTab(initialCwd);
+    this.selectFocusedTabs();
   }
 
   get tab(): Tab {
@@ -67,7 +74,21 @@ export class Workspace {
   }
 
   get popup(): Popup | undefined {
-    return this.popups.find((popup) => popup.tabId === this.tab.id);
+    const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id);
+    if (!popup) return undefined;
+    if (!this.shownPopups.has(popup.id) && this.popupDelayLeft(popup) > 0) return undefined;
+    this.shownPopups.add(popup.id);
+    return popup;
+  }
+
+  popupWaitMs(): number | undefined {
+    const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id);
+    if (!popup || this.shownPopups.has(popup.id)) return undefined;
+    return Math.max(this.popupDelayLeft(popup), 0);
+  }
+
+  private popupDelayLeft(_popup: Popup): number {
+    return this.lastKeyAt + popupDelayMs - this.now();
   }
 
   popupsWaiting(tab: Tab): number {
@@ -78,17 +99,20 @@ export class Workspace {
     return this.nextPaneId++;
   }
 
-  openPopup(id: PaneId, title: string, askingPane?: PaneId): void {
+  openPopup(id: PaneId, title: string, askingPane?: PaneId): boolean {
     const owner = this.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane)) ?? this.tab;
-    this.popups.push({ id, title, tabId: owner.id });
+    this.popups.push({ id, title, tabId: owner.id, askingPane });
+    return owner !== this.tab || (askingPane !== undefined && askingPane !== this.tab.focused);
   }
 
   popupExited(id: PaneId): void {
     const index = this.popups.findIndex((popup) => popup.id === id);
     if (index >= 0) this.popups.splice(index, 1);
+    this.shownPopups.delete(id);
   }
 
   handleKey(key: InputKey): boolean {
+    if (!this.popup) this.lastKeyAt = this.now();
     try {
       return this.dispatchKey(key);
     } finally {
@@ -98,8 +122,11 @@ export class Workspace {
 
   private selectFocusedTabs(): void {
     for (const tab of this.tabs) tab.root = selectPaneTab(tab.root, tab.focused);
-    const focused = this.tabs[this.active]?.focused;
-    if (focused !== undefined && this.agents.get(focused) === "done") this.agents.delete(focused);
+    const id = this.tabs[this.active]?.id;
+    if (id !== this.currentTabId) {
+      this.previousTabId = this.currentTabId;
+      this.currentTabId = id;
+    }
   }
 
   setAgentState(id: PaneId, state: AgentState | undefined): boolean {
@@ -109,16 +136,13 @@ export class Workspace {
       return false;
     }
     const watching = id === this.tab.focused;
-    if (state === "done" && watching) {
-      this.agents.delete(id);
-      return false;
-    }
     const changed = this.agents.get(id) !== state;
     this.agents.set(id, state);
     return changed && !watching && state !== "working";
   }
 
   tabAttention(tab: Tab): AgentState | undefined {
+    if (this.popupsWaiting(tab) > 0) return "waiting";
     let most: AgentState | undefined;
     for (const id of paneIds(tab.root)) {
       const state = this.agents.get(id);
@@ -131,21 +155,30 @@ export class Workspace {
     const order = this.tabs.flatMap((tab, index) => paneIds(tab.root).map((id) => ({ index, id })));
     const start = order.findIndex((entry) => entry.index === this.active && entry.id === this.tab.focused);
     const rotated = [...order.slice(start + 1), ...order.slice(0, start + 1)];
-    const target =
-      rotated.find((entry) => this.agents.get(entry.id) === "waiting") ?? rotated.find((entry) => this.agents.get(entry.id) === "done");
+    const asking = new Set(this.popups.map((popup) => popup.askingPane ?? this.tabs.find((tab) => tab.id === popup.tabId)?.focused));
+    const needs = (id: PaneId) => asking.has(id) || this.agents.get(id) === "waiting";
+    const finished = (id: PaneId) => this.agents.get(id) === "done" || this.agents.get(id) === "failed";
+    const target = rotated.find((entry) => needs(entry.id)) ?? rotated.find((entry) => finished(entry.id));
     if (!target) {
       this.message = "No agent needs you";
       return;
     }
     this.active = target.index;
     this.tab.focused = target.id;
+    this.lastKeyAt = Number.NEGATIVE_INFINITY;
   }
 
   private dispatchKey(key: InputKey): boolean {
     this.message = undefined;
     const consumed = this.routeKey(key);
-    if (!consumed && !this.popup && this.agents.get(this.tab.focused) === "waiting") this.agents.set(this.tab.focused, "working");
+    if (!consumed && !this.popup) this.acknowledge(this.tab.focused);
     return consumed;
+  }
+
+  private acknowledge(id: PaneId): void {
+    const state = this.agents.get(id);
+    if (state === "waiting") this.agents.set(id, "working");
+    if (state === "done" || state === "failed") this.agents.delete(id);
   }
 
   private routeKey(key: InputKey): boolean {
@@ -202,12 +235,12 @@ export class Workspace {
     const project = resolveTarget(target.trim(), this.host.cwd(this.tab.focused) ?? process.cwd(), this.host.projects());
     if (!project) return `No project matches ${JSON.stringify(target.trim())}`;
     const existing = this.tabs.findIndex((tab) => tab.name === project.name);
-    if (existing >= 0) {
-      this.active = existing;
-      return undefined;
+    if (existing >= 0) this.active = existing;
+    else {
+      const layout = this.config.projects.layout ? this.config.layouts[this.config.projects.layout] : undefined;
+      this.openTab(project.dir, { name: project.name, layout });
     }
-    const layout = this.config.projects.layout ? this.config.layouts[this.config.projects.layout] : undefined;
-    this.openTab(project.dir, { name: project.name, layout });
+    this.selectFocusedTabs();
     return undefined;
   }
 
@@ -217,10 +250,11 @@ export class Workspace {
     this.paneNames.delete(id);
     this.agents.delete(id);
     const tab = this.tabs[index]!;
+    const sibling = paneTabSibling(tab.root, id);
     const root = removePane(tab.root, id);
     if (root === null) return this.removeTab(index);
     tab.root = root;
-    if (tab.focused === id) tab.focused = paneIds(root)[0]!;
+    if (tab.focused === id) tab.focused = sibling ?? paneIds(root)[0]!;
     tab.zoomed = false;
     this.selectFocusedTabs();
   }
@@ -281,6 +315,12 @@ export class Workspace {
         return;
       case "next-attention":
         return this.jumpToAttention();
+      case "last-tab": {
+        const index = this.tabs.findIndex((tab) => tab.id === this.previousTabId);
+        if (index >= 0) this.active = index;
+        else this.message = "No previous tab";
+        return;
+      }
       case "close-popup":
         if (this.popup) this.host.closePopup(this.popup.id);
         else this.message = "No popup is open";

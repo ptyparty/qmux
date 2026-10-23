@@ -216,14 +216,17 @@ describe("Workspace", () => {
   });
 
   test("a popup belongs to the asking pane's tab and tab keys still work over it", () => {
-    const workspace = new Workspace(new FakeHost());
+    const clock = { now: 0 };
+    const workspace = new Workspace(new FakeHost(), undefined, undefined, () => clock.now);
     press(workspace, "ctrl+t", "c");
     const popup = workspace.reservePaneId();
-    workspace.openPopup(popup, "Question", 1);
+    expect(workspace.openPopup(popup, "Question", 1)).toBe(true);
     expect(workspace.popup).toBeUndefined();
     expect(workspace.popupsWaiting(workspace.tabs[0]!)).toBe(1);
+    expect(workspace.tabAttention(workspace.tabs[0]!)).toBe("waiting");
     expect(press(workspace, "a")).toEqual([false]);
     press(workspace, "ctrl+t", "h", "escape");
+    clock.now += 2000;
     expect(workspace.popup?.title).toBe("Question");
     expect(press(workspace, "a")).toEqual([false]);
     expect(press(workspace, "ctrl+t", "s")).toEqual([true, true]);
@@ -327,14 +330,61 @@ describe("Workspace", () => {
 
   test("held pane keys also work in locked mode, and its hints hide behind a popup", () => {
     const host = new FakeHost();
-    const workspace = new Workspace(host);
+    const clock = { now: 0 };
+    const workspace = new Workspace(host, undefined, undefined, () => clock.now);
     host.held.add(1);
     press(workspace, "ctrl+g", "return");
     expect(host.reruns).toEqual([1]);
     host.held.add(1);
     expect(workspace.focusedPaneHeld()).toBe(true);
     workspace.openPopup(workspace.reservePaneId(), "Question");
+    clock.now += 2000;
     expect(workspace.focusedPaneHeld()).toBe(false);
+  });
+
+  test("a popup waits until the user stops typing before it takes the keys", () => {
+    const clock = { now: 0 };
+    const workspace = new Workspace(new FakeHost(), undefined, undefined, () => clock.now);
+    press(workspace, "h");
+    workspace.openPopup(workspace.reservePaneId(), "Question", 1);
+    clock.now += 500;
+    expect(workspace.popup).toBeUndefined();
+    expect(workspace.popupWaitMs()).toBe(1000);
+    expect(press(workspace, "i")).toEqual([false]);
+    clock.now += 1000;
+    expect(workspace.popup).toBeUndefined();
+    clock.now += 600;
+    expect(workspace.popup?.title).toBe("Question");
+    press(workspace, "y");
+    expect(workspace.popup?.title).toBe("Question");
+  });
+
+  test("Alt+a takes you to a question and shows it straight away", () => {
+    const clock = { now: 0 };
+    const workspace = new Workspace(new FakeHost(), undefined, undefined, () => clock.now);
+    press(workspace, "ctrl+t", "c");
+    workspace.openPopup(workspace.reservePaneId(), "Question", 1);
+    press(workspace, "alt+a");
+    expect([workspace.active, workspace.tab.focused]).toEqual([0, 1]);
+    expect(workspace.popup?.title).toBe("Question");
+  });
+
+  test("closing a pane in a pane-tab group keeps focus in the group", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+p", "r", "ctrl+p", "s", "ctrl+p", "s");
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { kind: "tabs", panes: [2, 3, 4] }] });
+    press(workspace, "alt+h", "ctrl+p", "x");
+    expect(workspace.tab.focused).toBe(4);
+  });
+
+  test("Ctrl+t a goes back to the previous tab", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+t", "c", "ctrl+t", "c", "ctrl+t", "1");
+    expect(workspace.active).toBe(0);
+    press(workspace, "ctrl+t", "a");
+    expect(workspace.active).toBe(2);
+    press(workspace, "ctrl+t", "a");
+    expect(workspace.active).toBe(0);
   });
 
   describe("agent states", () => {
@@ -352,11 +402,13 @@ describe("Workspace", () => {
       expect(workspace.setAgentState(2, "waiting")).toBe(false);
       expect(workspace.tabAttention(workspace.tabs[0]!)).toBe("waiting");
       expect(workspace.setAgentState(3, "done")).toBe(false);
-      expect(workspace.agents.has(3)).toBe(false);
+      expect(workspace.agents.get(3)).toBe("done");
+      expect(workspace.setAgentState(1, "failed")).toBe(true);
+      expect(workspace.tabAttention(workspace.tabs[0]!)).toBe("waiting");
       expect(workspace.setAgentState(99, "done")).toBe(false);
     });
 
-    test("Alt+a jumps to waiting agents first, then done ones, and focusing clears done", () => {
+    test("Alt+a jumps to waiting agents first, then done ones, and typing clears done", () => {
       const workspace = twoTabs();
       workspace.setAgentState(1, "done");
       workspace.setAgentState(2, "waiting");
@@ -365,6 +417,8 @@ describe("Workspace", () => {
       workspace.setAgentState(2, undefined);
       press(workspace, "alt+a");
       expect([workspace.active, workspace.tab.focused]).toEqual([0, 1]);
+      expect(workspace.agents.get(1)).toBe("done");
+      press(workspace, "x");
       expect(workspace.agents.has(1)).toBe(false);
       press(workspace, "alt+a");
       expect(workspace.message).toBe("No agent needs you");

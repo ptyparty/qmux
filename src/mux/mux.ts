@@ -3,7 +3,7 @@ import type { Config } from "./config.ts";
 import type { ControlRequest, ControlResponse } from "./control.ts";
 import { findProjects } from "./projects.ts";
 import { paneIds, type PaneId } from "./layout.ts";
-import { Pane } from "./pane.ts";
+import { Pane, type CommandEvent } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
 import { MuxView } from "./view.ts";
 import { Workspace, type PaneHost } from "./workspace.ts";
@@ -11,6 +11,7 @@ import { Workspace, type PaneHost } from "./workspace.ts";
 const readBudgetMs = 6;
 const readWindowMs = 16;
 const titleRefreshMs = 1000;
+const longCommandMs = 10_000;
 
 export type MuxOptions = {
   session: string;
@@ -35,6 +36,29 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   let view: MuxView | undefined;
   let stopped = false;
 
+  let popupTimer: Timer | undefined;
+  const runningCommands = new Map<PaneId, { started: number; timer: Timer }>();
+
+  const commandEvent = (id: PaneId, event: CommandEvent) => {
+    const running = runningCommands.get(id);
+    if (running) clearTimeout(running.timer);
+    runningCommands.delete(id);
+    if (event.kind === "started") {
+      const timer = setTimeout(() => {
+        workspace.setAgentState(id, "working");
+        refresh();
+      }, longCommandMs);
+      runningCommands.set(id, { started: Date.now(), timer });
+      return;
+    }
+    if (!running || Date.now() - running.started < longCommandMs) return;
+    const succeeded = event.code === 0;
+    if (workspace.setAgentState(id, succeeded ? "done" : "failed")) {
+      const where = workspace.tabs.find((tab) => paneIds(tab.root).includes(id))?.name ?? "qmux";
+      renderer.triggerNotification(succeeded ? "A command finished" : `A command failed (exit ${event.code})`, where);
+    }
+    refresh();
+  };
   const refresh = () => {
     if (stopped) return;
     if (workspace.quit) {
@@ -46,11 +70,15 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       options.onDetach();
     }
     view?.render();
+    const wait = workspace.popupWaitMs();
+    clearTimeout(popupTimer);
+    if (wait !== undefined) popupTimer = setTimeout(refresh, wait + 20);
   };
 
   const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, holdOnExit = false, frameless = false) => {
     panes.set(id, new Pane(renderer, id, { cwd, command, env: paneEnv, holdOnExit, frameless }, scheduler, {
       onHeld: () => refresh(),
+      onCommand: frameless ? undefined : commandEvent,
       onExit: (exited) => {
         panes.get(exited)?.destroy();
         panes.delete(exited);
@@ -90,7 +118,10 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   const openPopup = (title: string, command: string[], askingPane: PaneId | undefined) => {
     const id = workspace.reservePaneId();
     spawnPane(id, host.cwd(askingPane ?? workspace.tab.focused), command, (exited) => workspace.popupExited(exited), false, true);
-    workspace.openPopup(id, title, askingPane);
+    if (workspace.openPopup(id, title, askingPane)) {
+      const where = workspace.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane))?.name ?? "qmux";
+      renderer.triggerNotification(title, where);
+    }
     refresh();
   };
 
@@ -121,6 +152,8 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     if (stopped) return;
     stopped = true;
     clearInterval(titles);
+    clearTimeout(popupTimer);
+    for (const running of runningCommands.values()) clearTimeout(running.timer);
     renderer.keyInput.off("keypress", onKey);
     for (const pane of panes.values()) pane.destroy();
     panes.clear();

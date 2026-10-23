@@ -196,6 +196,9 @@ export class MuxView {
     const { prompt, message, mode } = this.workspace;
     if (prompt) return styled(hintParts(mode, [{ keys: "Enter", description: "confirm" }, { keys: "Esc", description: "cancel" }]));
     if (message) return styled([" ", fg(theme.warning)(message)]);
+    if (this.workspace.popupWaitMs() !== undefined) {
+      return styled([" ", fg(theme.warning)("A question is waiting"), fg(theme.muted)(" · it opens when you pause typing · "), bold(fg(theme.accent)("Alt a")), fg(theme.muted)(" open now")]);
+    }
     if ((mode === "normal" || mode === "locked") && this.workspace.focusedPaneHeld()) {
       return styled([" ", fg(theme.warning)("Command exited"), fg(theme.border)("  ·  "), ...hintParts(mode, heldHints).slice(1)]);
     }
@@ -207,9 +210,9 @@ function modeFocusColor(mode: Mode): string {
   return mode === "normal" ? theme.accent : theme.modes[mode];
 }
 
-const agentBadges: Record<AgentState, string> = { working: "●", waiting: "!", done: "✓" };
-const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done" };
-const agentColors: Record<AgentState, string> = { working: theme.accent, waiting: theme.warning, done: theme.modes.normal };
+const agentBadges: Record<AgentState, string> = { working: "●", waiting: "!", done: "✓", failed: "✗" };
+const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done", failed: "failed" };
+const agentColors: Record<AgentState, string> = { working: theme.accent, waiting: theme.warning, done: theme.modes.normal, failed: theme.modes.locked };
 
 const heldHints: Hint[] = [
   { keys: "Enter", description: "re-run" },

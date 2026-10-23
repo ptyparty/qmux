@@ -6,10 +6,13 @@ import type { PaneId } from "./layout.ts";
 import { Pty, type ReadScheduler } from "./pty.ts";
 import { theme } from "./theme.ts";
 
+export type CommandEvent = { kind: "started" } | { kind: "finished"; code: number };
+
 export type PaneEvents = {
   onExit: (id: PaneId) => void;
   onHeld: (id: PaneId) => void;
   onClick: (id: PaneId) => void;
+  onCommand?: (id: PaneId, event: CommandEvent) => void;
 };
 
 export type PaneOptions = {
@@ -21,6 +24,9 @@ export type PaneOptions = {
 };
 
 const resetTerminal = "\x1bc";
+const fishIntegration = new URL("../shell/qmux.fish", import.meta.url).pathname;
+const commandMark = /\x1b\]133;([CD])(?:;(-?\d+))?(?:\x07|\x1b\\)/g;
+const markTailLength = 32;
 
 export class Pane {
   readonly frame: BoxRenderable;
@@ -29,6 +35,7 @@ export class Pane {
   private size = { cols: 80, rows: 24 };
   private exitCode: number | null | undefined;
   private command: string[] | undefined;
+  private markTail = "";
 
   constructor(
     renderer: CliRenderer,
@@ -122,12 +129,15 @@ export class Pane {
   private start(command: string[] | undefined): Pty {
     this.command = command;
     const pty: Pty = new Pty({
-      command: command ?? [process.env.SHELL ?? "/bin/sh"],
+      command: command ?? shellCommand(),
       cols: this.size.cols,
       rows: this.size.rows,
       cwd: this.options.cwd ?? process.cwd(),
       scheduler: this.scheduler,
-      onData: (data) => this.view.write(data),
+      onData: (data) => {
+        this.view.write(data);
+        if (this.events.onCommand) this.scanCommandMarks(data);
+      },
       onExit: () => this.childExited(pty, command !== undefined),
       env: { ...paneEnvironment(this.id), ...this.options.env },
     });
@@ -148,11 +158,25 @@ export class Pane {
     });
   }
 
+  private scanCommandMarks(data: Uint8Array): void {
+    const text = this.markTail + Buffer.from(data).toString("latin1");
+    for (const match of text.matchAll(commandMark)) {
+      if (match.index! + match[0].length <= this.markTail.length) continue;
+      this.events.onCommand?.(this.id, match[1] === "C" ? { kind: "started" } : { kind: "finished", code: Number(match[2] ?? 0) });
+    }
+    this.markTail = text.slice(-markTailLength);
+  }
+
   private directoryLabel(): string {
     const cwd = this.cwd();
     if (!cwd) return `Pane #${this.id}`;
     return cwd === homedir() ? "~" : basename(cwd);
   }
+}
+
+function shellCommand(): string[] {
+  const shell = process.env.SHELL ?? "/bin/sh";
+  return basename(shell) === "fish" ? [shell, "-C", `source ${fishIntegration}`] : [shell];
 }
 
 function paneEnvironment(id: PaneId): Record<string, string | undefined> {

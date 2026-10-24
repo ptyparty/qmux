@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { styled, type Part } from "../ui/styled.ts";
 import { theme } from "./theme.ts";
+import type { Project } from "./projects.ts";
 import type { Prompt } from "./workspace.ts";
 
 export class Launcher {
@@ -10,6 +11,7 @@ export class Launcher {
   private readonly detail: TextRenderable;
   private readonly input: TextRenderable;
   private readonly matches: TextRenderable;
+  private readonly marked: TextRenderable;
   private readonly footer: TextRenderable;
 
   constructor(renderer: CliRenderer) {
@@ -32,8 +34,9 @@ export class Launcher {
     this.detail = new TextRenderable(renderer, { fg: theme.muted });
     this.input = new TextRenderable(renderer, {});
     this.matches = new TextRenderable(renderer, { marginTop: 1, wrapMode: "none" });
+    this.marked = new TextRenderable(renderer, { marginTop: 1, wrapMode: "none" });
     this.footer = new TextRenderable(renderer, { fg: theme.muted, marginTop: 1 });
-    for (const child of [this.detail, this.input, this.matches, this.footer]) this.box.add(child);
+    for (const child of [this.detail, this.input, this.matches, this.marked, this.footer]) this.box.add(child);
     renderer.root.add(this.box);
   }
 
@@ -47,23 +50,34 @@ export class Launcher {
     const matches = prompt.matches;
     this.matches.visible = matches !== undefined;
     if (matches) this.matches.content = matches.length > 0 ? styled(matchLines(prompt)) : styled([fg(theme.muted)("No matching projects")]);
-    this.footer.content = matches ? "↑↓ select · Tab complete · Enter open · Esc cancel" : "Enter confirm · Esc cancel";
+    const marked = prompt.marked ?? [];
+    this.marked.visible = marked.length > 0;
+    if (marked.length > 0) this.marked.content = styled(markedLines(marked));
+    this.footer.content = matches ? `↑↓ select · Space mark · Tab complete · Enter open${marked.length > 0 ? ` ${marked.length}` : ""} · Esc cancel` : "Enter confirm · Esc cancel";
     const matchRows = matches ? Math.max(matches.length, 1) + 1 : 0;
-    this.box.height = 2 + (prompt.detail ? 1 : 0) + 1 + matchRows + 2;
+    const markedRows = marked.length > 0 ? marked.length + 2 : 0;
+    this.box.height = 2 + (prompt.detail ? 1 : 0) + 1 + matchRows + markedRows + 2;
   }
 }
 
 function matchLines(prompt: Prompt): Part[] {
-  const parts: Part[] = [];
-  prompt.matches!.forEach((match, index) => {
-    if (index > 0) parts.push("\n");
-    const selected = index === prompt.selected;
-    const name = match.name.padEnd(22);
-    const where = shortenHome(dirname(match.dir));
-    parts.push(selected ? bold(fg(theme.background)(bg(theme.accent)(` ${name} `))) : fg(theme.text)(` ${name} `));
-    parts.push(fg(theme.muted)(`  ${where}`));
-  });
-  return parts;
+  return prompt.matches!.flatMap((match, index) => [
+    ...(index > 0 ? ["\n"] : []),
+    ...projectRow(match, { selected: index === prompt.selected, marked: prompt.marked?.some((mark) => mark.dir === match.dir) ?? false }),
+  ]);
+}
+
+function markedLines(marked: Project[]): Part[] {
+  return [fg(theme.muted)("To open"), ...marked.flatMap((project) => ["\n", ...projectRow(project, { selected: false, marked: true })])];
+}
+
+function projectRow(project: Project, state: { selected: boolean; marked: boolean }): Part[] {
+  const name = project.name.padEnd(20);
+  return [
+    state.marked ? bold(fg(theme.accent)("✓ ")) : "  ",
+    state.selected ? bold(fg(theme.background)(bg(theme.accent)(` ${name} `))) : fg(theme.text)(` ${name} `),
+    fg(theme.muted)(`  ${shortenHome(dirname(project.dir))}`),
+  ];
 }
 
 function shortenHome(path: string): string {

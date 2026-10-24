@@ -24,6 +24,7 @@ export type Prompt = {
   text: string;
   candidates?: Project[];
   matches?: Project[];
+  marked?: Project[];
   selected: number;
 };
 
@@ -286,13 +287,25 @@ export class Workspace {
   openProject(target: string): string | undefined {
     const project = resolveTarget(target.trim(), this.host.cwd(this.tab.focused) ?? process.cwd(), this.projects());
     if (!project) return `No project matches ${JSON.stringify(target.trim())}`;
-    const existing = this.tabs.findIndex((tab) => tab.name === project.name);
-    if (existing >= 0) this.active = existing;
-    else {
-      this.openTab(project.dir, { name: project.name, layout: projectLayout(this.config, project) });
-    }
+    this.showProject(project);
     this.selectFocusedTabs();
     return undefined;
+  }
+
+  private openProjects(projects: Project[]): void {
+    let first: number | undefined;
+    for (const project of projects) {
+      this.showProject(project);
+      first ??= this.active;
+    }
+    if (first !== undefined) this.active = first;
+    this.selectFocusedTabs();
+  }
+
+  private showProject(project: Project): void {
+    const existing = this.tabs.findIndex((tab) => tab.name === project.name);
+    if (existing >= 0) this.active = existing;
+    else this.openTab(project.dir, { name: project.name, layout: projectLayout(this.config, project) });
   }
 
   openPaneNear(near: PaneId, placement: PanePlacement, command: string[], options: { name?: string; focus?: boolean } = {}): PaneId | undefined {
@@ -375,7 +388,7 @@ export class Workspace {
         return this.openTab(this.config.defaultCwd ? expandHome(this.config.defaultCwd) : this.host.cwd(this.tab.focused));
       case "open-project": {
         const candidates = this.projects();
-        this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates.slice(0, shownMatches), selected: 0 };
+        this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates.slice(0, shownMatches), marked: [], selected: 0 };
         return;
       }
       case "close-tab":
@@ -492,6 +505,11 @@ export class Workspace {
       if (matches.length > 0) prompt.selected = (prompt.selected + (key.name === "up" ? -1 : 1) + matches.length) % matches.length;
       return;
     }
+    if (prompt.marked && key.sequence === " ") {
+      const selected = matches[prompt.selected];
+      if (selected) prompt.marked = toggleMark(prompt.marked, selected);
+      return;
+    }
     if (key.name === "tab") {
       const selected = matches[prompt.selected];
       if (selected) prompt.text = selected.name;
@@ -519,6 +537,7 @@ export class Workspace {
         this.message = "Kept the tab";
         return;
       case "open-project": {
+        if (prompt.marked && prompt.marked.length > 0) return this.openProjects(prompt.marked);
         const target = looksLikePath(text) ? text : (prompt.matches?.[prompt.selected]?.name ?? text);
         if (target) this.message = this.openProject(target);
         return;
@@ -536,6 +555,10 @@ function keyLabel(name: string): string {
 
 function wrap(index: number, length: number): number {
   return ((index % length) + length) % length;
+}
+
+function toggleMark(marked: Project[], project: Project): Project[] {
+  return marked.some((mark) => mark.dir === project.dir) ? marked.filter((mark) => mark.dir !== project.dir) : [...marked, project];
 }
 
 function isPrintable(sequence: string): boolean {

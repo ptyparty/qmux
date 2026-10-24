@@ -430,6 +430,40 @@ describe("Workspace", () => {
     expect(workspace.tab.name).toBe("penguin-auth");
   });
 
+  test("the project launcher opens every marked project and focuses the first", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+t", "o");
+    type(workspace, "pen ");
+    press(workspace, "backspace", "backspace", "backspace");
+    type(workspace, "mer ");
+    expect(workspace.prompt?.text).toBe("mer");
+    expect(workspace.prompt?.marked?.map((project) => project.name)).toEqual(["penguin", "merlin"]);
+    press(workspace, "return");
+    expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "penguin", "merlin"]);
+    expect(workspace.tab.name).toBe("penguin");
+  });
+
+  test("the project launcher unmarks a project marked twice", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+t", "o");
+    type(workspace, "pen  ");
+    expect(workspace.prompt?.marked).toEqual([]);
+    press(workspace, "down", "return");
+    expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "penguin-auth"]);
+  });
+
+  test("the project launcher switches to marked projects that already have tabs", () => {
+    const workspace = new Workspace(new FakeHost());
+    workspace.openProject("merlin");
+    press(workspace, "ctrl+t", "h", "ctrl+t", "o");
+    type(workspace, "merlin ");
+    press(workspace, "backspace", "backspace", "backspace", "backspace", "backspace", "backspace");
+    type(workspace, "pen ");
+    press(workspace, "return");
+    expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "merlin", "penguin"]);
+    expect(workspace.tab.name).toBe("merlin");
+  });
+
   test("opening a project that already has a tab switches to it", () => {
     const workspace = new Workspace(new FakeHost());
     expect(workspace.openProject("merlin")).toBeUndefined();

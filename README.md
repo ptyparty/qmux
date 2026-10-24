@@ -61,8 +61,9 @@ Each ask is stored as a directory under `$XDG_RUNTIME_DIR/qmux/asks/<id>/`. Set 
 
 With the hooks in place:
 
-- **Badges:** pane titles and tabs show `●` working, `!` needs you, and `✓` done.
-- **Alt+a** jumps to the next agent that needs you, then to finished ones. Looking at a finished pane clears its `✓`.
+- **Badges:** pane titles and tabs show `🧠` working, `!` needs you, and `🚀` done.
+- **Long commands:** in a fish pane, a command that runs a second or more shows `⏳` while it runs, then `⭐` or `💥` when it finishes. These sit beside an agent's badge, so a tab can show both. List programs that should never get these badges, such as editors and agents, in the config's `untrackedCommands`.
+- **Alt+a** jumps to the next agent that needs you, then to finished ones. Typing in a finished pane clears its `🚀`.
 - **Notifications:** an agent that needs you or finishes in a pane you are not looking at sends a terminal notification.
 - **Permission popups:** a permission request opens a popup in the agent's tab with Allow once, Always allow and Deny. Esc hands the question back to Claude's own prompt.
 - **Plan review:** when Claude finishes planning, the plan opens as rendered markdown in a popup. Approve in auto mode, approve and auto-accept edits, approve and review each edit, or keep planning with a note for Claude. Esc dismisses the plan and stops Claude, like Esc in Claude's own dialog.

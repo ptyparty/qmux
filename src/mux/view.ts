@@ -5,7 +5,7 @@ import { Launcher } from "./launcher.ts";
 import { paneIds, shownPaneTab, type LayoutNode, type PaneId, type TabsNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { theme } from "./theme.ts";
-import type { AgentState, Workspace } from "./workspace.ts";
+import type { AgentState, CommandState, Workspace } from "./workspace.ts";
 
 export class MuxView {
   private readonly tabBar: TextRenderable;
@@ -139,10 +139,12 @@ export class MuxView {
           column += 1;
         }
         const state = this.workspace.agents.get(id);
-        const label = ` ${state ? `${agentBadges[state]} ` : ""}${pane.label(this.workspace.paneNames.get(id))} `;
+        const command = this.workspace.commands.get(id);
+        const badges = `${state ? `${agentBadges[state]} ` : ""}${command ? `${commandBadges[command]} ` : ""}`;
+        const label = ` ${badges}${pane.label(this.workspace.paneNames.get(id))} `;
         const color = groupFocused ? modeFocusColor(this.workspace.mode) : theme.border;
         if (index === selected) parts.push(bold(bg(color)(fg(groupFocused ? theme.background : theme.text)(label))));
-        else parts.push(state ? fg(agentColors[state])(label) : fg(theme.muted)(label));
+        else parts.push(fg(state ? agentColors[state] : command ? commandColors[command] : theme.muted)(label));
         entry.ranges.push({ start: column, end: column + label.length, id });
         column += label.length;
       });
@@ -159,8 +161,10 @@ export class MuxView {
   private paneTitle(id: PaneId, pane: Pane): string {
     const zoomed = this.workspace.tab.zoomed && id === this.workspace.tab.focused ? " (zoomed)" : "";
     const state = this.workspace.agents.get(id);
+    const command = this.workspace.commands.get(id);
     const badge = state ? `${agentBadges[state]} ${agentLabels[state]} · ` : "";
-    return `${badge}${pane.label(this.workspace.paneNames.get(id))}${zoomed}`;
+    const commandBadge = command ? `${commandBadges[command]} ${commandLabels[command]} · ` : "";
+    return `${badge}${commandBadge}${pane.label(this.workspace.paneNames.get(id))}${zoomed}`;
   }
 
   private renderTabs(): StyledText {
@@ -172,7 +176,9 @@ export class MuxView {
       const attention = this.workspace.tabAttention(tab);
       const paint = (text: string, color: string) => (active ? bold(bg(focusColor)(fg(theme.background)(text))) : fg(color)(text));
       parts.push(paint(` ${index + 1} ${tab.name}${asking}`, theme.muted));
+      const command = this.workspace.tabCommandState(tab);
       if (attention) parts.push(paint(` ${agentBadges[attention]}`, agentColors[attention]));
+      if (command) parts.push(paint(` ${commandBadges[command]}`, commandColors[command]));
       parts.push(paint(" ", theme.muted), " ");
     });
     if (this.workspace.clients > 1) parts.push(fg(theme.warning)(` ${this.workspace.clients} terminals attached `));
@@ -210,9 +216,12 @@ function modeFocusColor(mode: Mode): string {
   return mode === "normal" ? theme.accent : theme.modes[mode];
 }
 
-const agentBadges: Record<AgentState, string> = { working: "●", waiting: "!", done: "✓", failed: "✗" };
+const agentBadges: Record<AgentState, string> = { working: "🧠", waiting: "!", done: "🚀", failed: "✗" };
 const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done", failed: "failed" };
 const agentColors: Record<AgentState, string> = { working: theme.accent, waiting: theme.warning, done: theme.modes.normal, failed: theme.modes.locked };
+const commandBadges: Record<CommandState, string> = { running: "⏳", succeeded: "⭐", failed: "💥" };
+const commandLabels: Record<CommandState, string> = { running: "running", succeeded: "succeeded", failed: "failed" };
+const commandColors: Record<CommandState, string> = { running: theme.accent, succeeded: theme.modes.normal, failed: theme.modes.locked };
 
 const heldHints: Hint[] = [
   { keys: "Enter", description: "re-run" },

@@ -10,7 +10,10 @@ export type Popup = { id: PaneId; title: string; tabId: number; askingPane?: Pan
 export const agentStates = ["working", "waiting", "done", "failed"] as const;
 export type AgentState = (typeof agentStates)[number];
 
+export type CommandState = "running" | "succeeded" | "failed";
+
 const urgency: Record<AgentState, number> = { waiting: 4, failed: 3, done: 2, working: 1 };
+const commandUrgency: Record<CommandState, number> = { failed: 3, succeeded: 2, running: 1 };
 const popupDelayMs = 1500;
 
 export type Prompt = {
@@ -52,6 +55,7 @@ export class Workspace {
   readonly paneNames = new Map<PaneId, string>();
   readonly popups: Popup[] = [];
   readonly agents = new Map<PaneId, AgentState>();
+  readonly commands = new Map<PaneId, CommandState>();
   private nextPaneId = 1;
   private nextTabNumber = 1;
   private lastKeyAt = Number.NEGATIVE_INFINITY;
@@ -141,6 +145,22 @@ export class Workspace {
     return changed && !watching && state !== "working";
   }
 
+  setCommandState(id: PaneId, state: CommandState): boolean {
+    if (!this.tabs.some((tab) => paneIds(tab.root).includes(id))) return false;
+    const changed = this.commands.get(id) !== state;
+    this.commands.set(id, state);
+    return changed && id !== this.tab.focused && state !== "running";
+  }
+
+  tabCommandState(tab: Tab): CommandState | undefined {
+    let most: CommandState | undefined;
+    for (const id of paneIds(tab.root)) {
+      const state = this.commands.get(id);
+      if (state && (!most || commandUrgency[state] > commandUrgency[most])) most = state;
+    }
+    return most;
+  }
+
   tabAttention(tab: Tab): AgentState | undefined {
     if (this.popupsWaiting(tab) > 0) return "waiting";
     let most: AgentState | undefined;
@@ -157,7 +177,7 @@ export class Workspace {
     const rotated = [...order.slice(start + 1), ...order.slice(0, start + 1)];
     const asking = new Set(this.popups.map((popup) => popup.askingPane ?? this.tabs.find((tab) => tab.id === popup.tabId)?.focused));
     const needs = (id: PaneId) => asking.has(id) || this.agents.get(id) === "waiting";
-    const finished = (id: PaneId) => this.agents.get(id) === "done" || this.agents.get(id) === "failed";
+    const finished = (id: PaneId) => this.agents.get(id) === "done" || this.agents.get(id) === "failed" || this.commandFinished(id);
     const target = rotated.find((entry) => needs(entry.id)) ?? rotated.find((entry) => finished(entry.id));
     if (!target) {
       this.message = "No agent needs you";
@@ -179,6 +199,12 @@ export class Workspace {
     const state = this.agents.get(id);
     if (state === "waiting") this.agents.set(id, "working");
     if (state === "done" || state === "failed") this.agents.delete(id);
+    if (this.commandFinished(id)) this.commands.delete(id);
+  }
+
+  private commandFinished(id: PaneId): boolean {
+    const state = this.commands.get(id);
+    return state === "succeeded" || state === "failed";
   }
 
   private routeKey(key: InputKey): boolean {
@@ -249,6 +275,7 @@ export class Workspace {
     if (index < 0) return;
     this.paneNames.delete(id);
     this.agents.delete(id);
+    this.commands.delete(id);
     const tab = this.tabs[index]!;
     const sibling = paneTabSibling(tab.root, id);
     const root = removePane(tab.root, id);

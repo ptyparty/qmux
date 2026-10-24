@@ -11,7 +11,7 @@ import { Workspace, type PaneHost } from "./workspace.ts";
 const readBudgetMs = 6;
 const readWindowMs = 16;
 const titleRefreshMs = 1000;
-const longCommandMs = 10_000;
+const longCommandMs = 1_000;
 
 export type MuxOptions = {
   session: string;
@@ -44,8 +44,9 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     if (running) clearTimeout(running.timer);
     runningCommands.delete(id);
     if (event.kind === "started") {
+      if (event.program && options.config.untrackedCommands.includes(event.program)) return;
       const timer = setTimeout(() => {
-        workspace.setAgentState(id, "working");
+        workspace.setCommandState(id, "running");
         refresh();
       }, longCommandMs);
       runningCommands.set(id, { started: Date.now(), timer });
@@ -53,7 +54,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     }
     if (!running || Date.now() - running.started < longCommandMs) return;
     const succeeded = event.code === 0;
-    if (workspace.setAgentState(id, succeeded ? "done" : "failed")) {
+    if (workspace.setCommandState(id, succeeded ? "succeeded" : "failed")) {
       const where = workspace.tabs.find((tab) => paneIds(tab.root).includes(id))?.name ?? "qmux";
       renderer.triggerNotification(succeeded ? "A command finished" : `A command failed (exit ${event.code})`, where);
     }

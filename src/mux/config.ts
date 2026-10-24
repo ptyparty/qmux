@@ -31,6 +31,7 @@ export const configSchema = z
   .object({
     defaultCwd: z.string().optional().describe("Directory for new tabs; defaults to the focused pane's directory"),
     env: z.record(z.string(), z.string()).default({}).describe("Environment variables set in every pane, such as EDITOR"),
+    untrackedCommands: z.array(z.string()).default([]).describe("Programs that never get a long-running command badge, such as editors and agents"),
     layouts: z.record(z.string(), layoutSpec).default({}),
     projects: z
       .object({

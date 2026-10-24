@@ -432,11 +432,28 @@ describe("Workspace", () => {
       expect(workspace.agents.get(2)).toBe("working");
     });
 
+    test("a long command and an agent in one tab keep separate states", () => {
+      const workspace = twoTabs();
+      workspace.setAgentState(1, "working");
+      expect(workspace.setCommandState(2, "running")).toBe(false);
+      expect(workspace.tabAttention(workspace.tabs[0]!)).toBe("working");
+      expect(workspace.tabCommandState(workspace.tabs[0]!)).toBe("running");
+      expect(workspace.setCommandState(2, "succeeded")).toBe(true);
+      expect(workspace.agents.get(1)).toBe("working");
+      press(workspace, "alt+a");
+      expect([workspace.active, workspace.tab.focused]).toEqual([0, 2]);
+      press(workspace, "x");
+      expect(workspace.commands.has(2)).toBe(false);
+      expect(workspace.agents.get(1)).toBe("working");
+    });
+
     test("an exiting pane forgets its state", () => {
       const workspace = twoTabs();
       workspace.setAgentState(2, "waiting");
+      workspace.setCommandState(2, "failed");
       workspace.paneExited(2);
       expect(workspace.agents.has(2)).toBe(false);
+      expect(workspace.commands.has(2)).toBe(false);
     });
   });
 

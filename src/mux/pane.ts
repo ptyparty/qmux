@@ -7,7 +7,7 @@ import { Pty, type ReadScheduler } from "./pty.ts";
 import { theme } from "./theme.ts";
 import { wordAt } from "./words.ts";
 
-export type CommandEvent = { kind: "started" } | { kind: "finished"; code: number };
+export type CommandEvent = { kind: "started"; program?: string } | { kind: "finished"; code: number };
 
 export type PaneEvents = {
   onExit: (id: PaneId) => void;
@@ -26,8 +26,8 @@ export type PaneOptions = {
 
 const resetTerminal = "\x1bc";
 const fishIntegration = new URL("../shell/qmux.fish", import.meta.url).pathname;
-const commandMark = /\x1b\]133;([CD])(?:;(-?\d+))?(?:\x07|\x1b\\)/g;
-const markTailLength = 32;
+const commandMark = /\x1b\]133;([CD])(?:;([^\x07\x1b]*))?(?:\x07|\x1b\\)/g;
+const markTailLength = 1024;
 const doubleClickMs = 400;
 
 export class Pane {
@@ -178,7 +178,7 @@ export class Pane {
     const text = this.markTail + Buffer.from(data).toString("latin1");
     for (const match of text.matchAll(commandMark)) {
       if (match.index! + match[0].length <= this.markTail.length) continue;
-      this.events.onCommand?.(this.id, match[1] === "C" ? { kind: "started" } : { kind: "finished", code: Number(match[2] ?? 0) });
+      this.events.onCommand?.(this.id, match[1] === "C" ? { kind: "started", program: programOf(match[2]) } : { kind: "finished", code: Number(match[2] ?? 0) });
     }
     this.markTail = text.slice(-markTailLength);
   }
@@ -188,6 +188,19 @@ export class Pane {
     if (!cwd) return `Pane #${this.id}`;
     return cwd === homedir() ? "~" : basename(cwd);
   }
+}
+
+export function programOf(params: string | undefined): string | undefined {
+  const encoded = params?.match(/(?:^|;)cmdline_url=([^;]*)/)?.[1];
+  if (encoded === undefined) return undefined;
+  let commandLine: string;
+  try {
+    commandLine = decodeURIComponent(encoded);
+  } catch {
+    return undefined;
+  }
+  const word = commandLine.trim().split(/\s+/).find((token) => !/^\w+=/.test(token));
+  return word ? basename(word) : undefined;
 }
 
 function shellCommand(): string[] {

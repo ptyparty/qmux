@@ -66,12 +66,19 @@ export const noteElement = z.object({
   when,
 });
 
+export const markdownElement = z.object({
+  type: z.literal("markdown"),
+  text: z.string().describe("Markdown rendered with headings, lists, emphasis, code, and tables; not an input"),
+  when,
+});
+
 export const element = z.discriminatedUnion("type", [
   textElement,
   confirmElement,
   choiceElement,
   numberElement,
   noteElement,
+  markdownElement,
 ]);
 
 export const formSpec = z
@@ -85,7 +92,7 @@ export const formSpec = z
 
 export type FormSpec = z.infer<typeof formSpec>;
 export type Element = z.infer<typeof element>;
-export type InputElement = Exclude<Element, { type: "note" }>;
+export type InputElement = Exclude<Element, { type: "note" | "markdown" }>;
 export type TextElement = z.infer<typeof textElement>;
 export type ConfirmElement = z.infer<typeof confirmElement>;
 export type ChoiceElement = z.infer<typeof choiceElement>;
@@ -97,7 +104,7 @@ export function parseFormSpec(input: unknown): FormSpec {
 }
 
 export function isInputElement(element: Element): element is InputElement {
-  return element.type !== "note";
+  return element.type !== "note" && element.type !== "markdown";
 }
 
 export function choiceOptions(element: ChoiceElement): ChoiceOption[] {

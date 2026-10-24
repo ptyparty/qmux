@@ -1,5 +1,5 @@
 import { ask } from "../ask/ask.ts";
-import { AskStore } from "../ask/store.ts";
+import { AskStore, type AskStatus } from "../ask/store.ts";
 import type { FormSpec } from "../form/schema.ts";
 import { ControlError, sendControl, type ControlRequest } from "../mux/control.ts";
 
@@ -95,8 +95,69 @@ export function permissionDecision(input: PermissionInput, answer: PermissionAns
 }
 
 export async function askPermission(pane: QmuxPane, input: PermissionInput): Promise<object | undefined> {
-  const values = await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`);
+  const values = submitted(await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`));
   return values && permissionDecision(input, values);
+}
+
+export type PlanInput = { hook_event_name: "PermissionRequest"; tool_name: "ExitPlanMode"; tool_input: { plan?: unknown; [key: string]: unknown } };
+
+export function planForm(plan: string): FormSpec {
+  return {
+    title: "Claude's plan",
+    elements: [
+      { type: "markdown", text: plan },
+      {
+        type: "choice",
+        id: "decision",
+        label: "Ready to code?",
+        other: false,
+        default: "auto",
+        options: [
+          { value: "auto", label: "Yes, and use auto mode" },
+          { value: "edits", label: "Yes, and auto-accept edits" },
+          { value: "review", label: "Yes, and review each edit" },
+          { value: "keep", label: "No, keep planning" },
+        ],
+      },
+      { type: "text", id: "feedback", label: "What should Claude change?", multiline: true, when: 'selected(decision, "keep")' },
+    ],
+    submitLabel: "Answer",
+  };
+}
+
+export type PlanAnswer = { decision?: unknown; feedback?: unknown };
+
+export function planDecision(toolInput: PlanInput["tool_input"], answer: PlanAnswer | "dismissed"): object | undefined {
+  const reply = (decision: object) => ({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision } });
+  const allow = (mode: string) => reply({ behavior: "allow", updatedInput: toolInput, updatedPermissions: [{ type: "setMode", mode, destination: "session" }] });
+  const deny = (message: string) => reply({ behavior: "deny", message });
+  if (answer === "dismissed") return reply({ behavior: "deny", message: "The user dismissed the plan.", interrupt: true });
+  switch (answer.decision) {
+    case "auto":
+      return allow("auto");
+    case "edits":
+      return allow("acceptEdits");
+    case "review":
+      return allow("default");
+    case "keep": {
+      const feedback = typeof answer.feedback === "string" && answer.feedback.trim() ? answer.feedback.trim() : "The user wants to keep planning.";
+      return deny(feedback);
+    }
+    default:
+      return undefined;
+  }
+}
+
+export async function askPlan(pane: QmuxPane, input: PlanInput): Promise<object | undefined> {
+  const plan = input.tool_input.plan;
+  if (typeof plan !== "string" || !plan.trim()) return undefined;
+  const status = await askInPopup(pane, planForm(plan), "Claude has a plan for you to review");
+  if (status?.status === "cancelled") {
+    await reportState(pane, "done");
+    return planDecision(input.tool_input, "dismissed");
+  }
+  const values = submitted(status);
+  return values && planDecision(input.tool_input, values);
 }
 
 export type ClaudeQuestion = { question: string; header?: string; options: { label: string; description?: string }[]; multiSelect?: boolean };
@@ -131,7 +192,7 @@ export function questionAnswers(questions: ClaudeQuestion[], values: Record<stri
 export async function askQuestions(pane: QmuxPane, input: QuestionInput): Promise<object | undefined> {
   const questions = input.tool_input.questions ?? [];
   if (questions.length === 0) return undefined;
-  const values = await askInPopup(pane, questionForm(questions), "Claude has a question");
+  const values = submitted(await askInPopup(pane, questionForm(questions), "Claude has a question"));
   if (!values) return undefined;
   return {
     hookSpecificOutput: {
@@ -142,7 +203,7 @@ export async function askQuestions(pane: QmuxPane, input: QuestionInput): Promis
   };
 }
 
-async function askInPopup(pane: QmuxPane, spec: FormSpec, waitingFor: string): Promise<Record<string, unknown> | undefined> {
+async function askInPopup(pane: QmuxPane, spec: FormSpec, waitingFor: string): Promise<AskStatus | undefined> {
   await reportState(pane, "waiting", waitingFor);
   let outcome;
   try {
@@ -150,9 +211,12 @@ async function askInPopup(pane: QmuxPane, spec: FormSpec, waitingFor: string): P
   } catch {
     return undefined;
   }
-  if (outcome.status.status !== "submitted") return undefined;
-  await reportState(pane, "working");
-  return outcome.status.values;
+  if (outcome.status.status === "submitted") await reportState(pane, "working");
+  return outcome.status;
+}
+
+function submitted(status: AskStatus | undefined): Record<string, unknown> | undefined {
+  return status?.status === "submitted" ? status.values : undefined;
 }
 
 function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
@@ -170,8 +234,8 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     return undefined;
   }
   if (input.hook_event_name === "PermissionRequest" && input.tool_name === "ExitPlanMode") {
-    await reportState(pane, "waiting", "Claude has a plan for you to review");
-    return undefined;
+    const decision = await askPlan(pane, input as unknown as PlanInput);
+    return decision ? JSON.stringify(decision) : undefined;
   }
   if (input.hook_event_name === "PermissionRequest") {
     const decision = await askPermission(pane, input as unknown as PermissionInput);

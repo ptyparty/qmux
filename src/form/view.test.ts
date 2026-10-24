@@ -19,6 +19,16 @@ async function open(elements: unknown[]): Promise<{ setup: TestRendererSetup; re
   return { setup, result };
 }
 
+async function renderedWith(setup: TestRendererSetup, text: string): Promise<string> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    if (frame.includes(text)) return frame;
+    await Bun.sleep(20);
+  }
+  return setup.captureCharFrame();
+}
+
 describe("form view", () => {
   test("renders every element with key hints", async () => {
     const { setup } = await open([
@@ -118,6 +128,35 @@ describe("form view", () => {
     const { setup, result } = await open([{ type: "text", id: "name", label: "Name" }]);
     setup.renderer.stdin.emit("data", Buffer.from("Revenge\x13"));
     expect(await result).toEqual({ status: "submitted", values: { name: "Revenge" } });
+  });
+
+  test("markdown renders formatted and long forms scroll by page", async () => {
+    const { setup } = await open([
+      { type: "markdown", text: `# Plan\n\n- **first** step\n- second step\n\n${Array.from({ length: 30 }, (_, i) => `Line ${i}`).join("\n\n")}` },
+      { type: "confirm", id: "ok", label: "OK?" },
+    ]);
+    const frame = await renderedWith(setup, "first step");
+    expect(frame).toContain("Plan");
+    expect(frame).not.toContain("# Plan");
+    expect(frame).not.toContain("**first**");
+    expect(frame).toContain("first step");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("PgUp/PgDn scroll");
+    setup.mockInput.pressKey("pagedown");
+    setup.mockInput.pressKey("pagedown");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("first step");
+  });
+
+  test("the mouse wheel scrolls long forms", async () => {
+    const { setup } = await open([
+      { type: "markdown", text: Array.from({ length: 40 }, (_, i) => `Line ${i}`).join("\n\n") },
+      { type: "confirm", id: "ok", label: "OK?" },
+    ]);
+    await renderedWith(setup, "Line 0");
+    for (let tick = 0; tick < 10; tick++) await setup.mockMouse.scroll(10, 10, "down");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toMatch(/Line 0\s/);
   });
 
   test("escape cancels", async () => {

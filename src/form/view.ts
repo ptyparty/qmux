@@ -1,8 +1,10 @@
 import {
   BoxRenderable,
   InputRenderable,
+  MarkdownRenderable,
   ScrollBoxRenderable,
   StyledText,
+  SyntaxStyle,
   TextareaRenderable,
   TextRenderable,
   bold,
@@ -26,7 +28,6 @@ const palette = {
 };
 
 type Editor = InputRenderable | TextareaRenderable;
-
 
 interface ElementView {
   readonly root: BoxRenderable;
@@ -73,7 +74,14 @@ class FormView {
     for (const view of this.views.values()) this.scroll.add(view.root);
     this.submit = new TextRenderable(renderer, { id: "submit" });
     this.scroll.add(this.submit);
-    this.hints = new TextRenderable(renderer, { fg: palette.muted });
+    this.hints = new TextRenderable(renderer, { fg: palette.muted, flexShrink: 0 });
+    for (const box of [this.scroll.content, this.scroll.viewport]) {
+      const recalculate = box.onSizeChange;
+      box.onSizeChange = () => {
+        recalculate?.call(box);
+        this.syncHints();
+      };
+    }
     frame.add(this.scroll);
     frame.add(this.hints);
     renderer.root.add(frame);
@@ -88,21 +96,36 @@ class FormView {
     }
     this.syncSubmit();
     this.syncFocus();
-    this.hints.content = renderHints(this.controller.focused());
+    this.syncHints();
     if (this.controller.result) this.finish(this.controller.result);
   }
 
-  private readonly changed = (): void => this.sync();
+  private readonly changed = (): void => {
+    this.sync();
+    this.scrollToFocus();
+  };
+
+  private readonly syncHints = (): void => {
+    this.hints.content = renderHints(this.controller.focused(), this.overflows());
+  };
 
   private readonly onKey = (key: KeyEvent): void => {
     const focused = this.controller.focused();
     const action = keyToAction(key, focused, editorPosition(this.editorFor(focused)));
-    if (!action) return;
+    if (!action) return this.page(key);
     key.preventDefault();
     for (const view of this.views.values()) view.flush();
     this.controller.dispatch(action);
     this.sync();
+    this.scrollToFocus();
   };
+
+  private page(key: KeyEvent): void {
+    const direction = key.name === "pageup" ? -1 : key.name === "pagedown" ? 1 : 0;
+    if (direction === 0) return;
+    key.preventDefault();
+    this.scroll.scrollBy(direction * 0.8, "viewport");
+  }
 
   private finish(result: FormResult): void {
     this.renderer.keyInput.off("keypress", this.onKey);
@@ -123,8 +146,16 @@ class FormView {
       for (const candidate of editorsOf(view)) if (candidate !== editor) candidate.blur();
     }
     editor?.focus();
+  }
+
+  private scrollToFocus(): void {
+    const focused = this.controller.focused();
     const id = focused.kind === "submit" ? "submit" : elementRootId(focused.element.id);
     this.scroll.scrollChildIntoView(id);
+  }
+
+  private overflows(): boolean {
+    return this.scroll.scrollHeight > this.scroll.viewport.height;
   }
 
   private editorFor(focusable: Focusable): Editor | undefined {
@@ -136,6 +167,8 @@ class FormView {
     switch (element.type) {
       case "note":
         return new NoteView(this.renderer, element.text);
+      case "markdown":
+        return new MarkdownView(this.renderer, element.text);
       case "text":
         return new TextView(this.renderer, this.controller, element, this.changed);
       case "confirm":
@@ -165,9 +198,10 @@ function elementRootId(id: string): string {
   return `element-${id}`;
 }
 
-function renderHints(focused: Focusable): StyledText {
+function renderHints(focused: Focusable, overflows: boolean): StyledText {
   const chunks: Part[] = [];
-  keyHints(focused).forEach((hint, index) => {
+  const scrolling = overflows ? [{ keys: "PgUp/PgDn", action: "scroll" }] : [];
+  [...keyHints(focused), ...scrolling].forEach((hint, index) => {
     if (index > 0) chunks.push(dim("  ·  "));
     chunks.push(bold(fg(palette.accent)(hint.keys)), fg(palette.muted)(` ${hint.action}`));
   });
@@ -189,6 +223,55 @@ class NoteView implements ElementView {
   editorFor(): undefined {
     return undefined;
   }
+}
+
+class MarkdownView implements ElementView {
+  readonly root: BoxRenderable;
+
+  constructor(renderer: CliRenderer, text: string) {
+    this.root = new BoxRenderable(renderer, { flexDirection: "column" });
+    this.root.add(new MarkdownRenderable(renderer, { content: text, syntaxStyle: markdownStyle(renderer), tableOptions: { widthMode: "content", cellPaddingX: 1 } }));
+  }
+
+  sync(): void {}
+
+  flush(): void {}
+
+  editorFor(): undefined {
+    return undefined;
+  }
+}
+
+function markdownStyle(renderer: CliRenderer): SyntaxStyle {
+  return SyntaxStyle.fromStyles(
+    {
+      default: {},
+      conceal: { fg: palette.muted },
+      "markup.heading": { fg: palette.accent, bold: true },
+      "markup.heading.1": { fg: "#e6c384", bold: true, underline: true },
+      "markup.heading.2": { fg: palette.accent, bold: true },
+      "markup.heading.3": { fg: "#957fb8", bold: true },
+      "markup.heading.4": { fg: "#957fb8" },
+      "markup.heading.5": { fg: palette.muted, bold: true },
+      "markup.heading.6": { fg: palette.muted },
+      "markup.strong": { bold: true },
+      "markup.italic": { italic: true },
+      "markup.strikethrough": { dim: true },
+      "markup.raw": { fg: "#e6c384" },
+      "markup.link": { fg: palette.accent, underline: true },
+      "markup.link.label": { fg: palette.accent },
+      "markup.link.url": { fg: palette.muted, underline: true },
+      "markup.list": { fg: palette.selected },
+      "markup.quote": { fg: palette.muted, italic: true },
+      keyword: { fg: "#957fb8" },
+      string: { fg: "#98bb6c" },
+      comment: { fg: palette.muted, italic: true },
+      number: { fg: "#d27e99" },
+      function: { fg: "#7e9cd8" },
+      type: { fg: "#7aa89f" },
+    },
+    renderer.nativeScene,
+  );
 }
 
 abstract class InputView implements ElementView {

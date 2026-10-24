@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskStore } from "../ask/store.ts";
 import { serveControl, type ControlRequest } from "../mux/control.ts";
-import { permissionDecision, permissionForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
+import { permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-hook-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -66,20 +66,18 @@ describe("qmux hook", () => {
     expect(questionAnswers(questions, { q0: "Svelte", q1: ["lint", "test"] })).toEqual({ "Which framework?": "Svelte", "Which checks?": "lint, test" });
   });
 
-  test("plan approval is left to Claude's own dialog", async () => {
-    const socket = join(dir, "plan.sock");
-    const requests: ControlRequest[] = [];
-    const server = serveControl(socket, (request) => {
-      requests.push(request);
-      return { ok: true };
-    });
-    try {
-      const output = await runHook(JSON.stringify({ hook_event_name: "PermissionRequest", tool_name: "ExitPlanMode", tool_input: { plan: "# Plan" } }), { QMUX_SOCKET: socket, QMUX_PANE_ID: "3" });
-      expect(output).toBeUndefined();
-    } finally {
-      server.stop();
-    }
-    expect(requests).toEqual([{ method: "agent.state", params: { paneId: 3, state: "waiting", detail: "Claude has a plan for you to review" } }]);
+  test("plan review renders the plan and maps answers to Claude decisions", () => {
+    const toolInput = { plan: "# Plan", planFilePath: "/tmp/plan.md" };
+    expect(planForm("# Plan").elements[0]).toEqual({ type: "markdown", text: "# Plan" });
+    const decision = (answer: Parameters<typeof planDecision>[1]) => (planDecision(toolInput, answer) as { hookSpecificOutput: { decision: unknown } } | undefined)?.hookSpecificOutput.decision;
+    const allow = (mode: string) => ({ behavior: "allow", updatedInput: toolInput, updatedPermissions: [{ type: "setMode", mode, destination: "session" }] });
+    expect(decision({ decision: "auto" })).toEqual(allow("auto"));
+    expect(decision({ decision: "edits" })).toEqual(allow("acceptEdits"));
+    expect(decision({ decision: "review" })).toEqual(allow("default"));
+    expect(decision({ decision: "keep", feedback: " Split step 2 " })).toEqual({ behavior: "deny", message: "Split step 2" });
+    expect(decision({ decision: "keep", feedback: "" })).toEqual({ behavior: "deny", message: "The user wants to keep planning." });
+    expect(decision("dismissed")).toEqual({ behavior: "deny", message: "The user dismissed the plan.", interrupt: true });
+    expect(decision({})).toBeUndefined();
   });
 
   test("does nothing outside qmux", async () => {

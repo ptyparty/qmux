@@ -65,6 +65,7 @@ With the hooks in place:
 - **Alt+a** jumps to the next agent that needs you, then to finished ones. Looking at a finished pane clears its `✓`.
 - **Notifications:** an agent that needs you or finishes in a pane you are not looking at sends a terminal notification.
 - **Permission popups:** a permission request opens a popup in the agent's tab with Allow once, Always allow and Deny. Esc hands the question back to Claude's own prompt.
+- **Plan review:** when Claude finishes planning, the plan opens as rendered markdown in a popup. Approve in auto mode, approve and auto-accept edits, approve and review each edit, or keep planning with a note for Claude. Esc dismisses the plan and stops Claude, like Esc in Claude's own dialog.
 - **Claude's questions:** with a `PreToolUse` hook on `AskUserQuestion`, Claude's questions open as a qmux popup in the agent's tab, and the answers go straight back to Claude. Esc falls back to Claude's own dialog.
 
 Outside qmux, `qmux hook` exits at once and does nothing.

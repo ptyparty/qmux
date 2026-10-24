@@ -52,6 +52,7 @@ Element types and their answer values:
 | `choice` | string or null; array with `multi` | `options` (strings or `{value, label?, description?}`), `multi`, `default`, `required`, `other` |
 | `number` | number | `min`, `max`, `step`, `default` |
 | `note` | none | `text` |
+| `markdown` | none | `text`, rendered with headings, lists, emphasis, code blocks, and tables |
 
 A choice gets an "Other…" free-text option unless `"other": false`. When the user picks it, the typed text is returned as the answer. Pass `"other": false` when only the listed options make sense.
 
@@ -66,5 +67,6 @@ A choice gets an "Other…" free-text option unless `"other": false`. When the u
 ## Writing good forms
 
 - Put the default you recommend in `default`, and say why in its option's `description` or a `note`.
+- Use a `markdown` element for anything longer than a sentence or two, such as a summary, a diff explanation, or a plan to approve. Forms that overflow scroll with PgUp/PgDn.
 - Keep a form to one screen, about six elements. Split unrelated decisions into separate asks.
 - Labels are questions the user can answer without scrolling back through chat. Include the specifics (names, numbers) in the label or description.

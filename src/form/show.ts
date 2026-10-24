@@ -4,7 +4,7 @@ import type { FormSpec } from "./schema.ts";
 import { runForm } from "./view.ts";
 
 export async function showForm(spec: FormSpec, onExitSignal: () => Promise<unknown>): Promise<FormResult> {
-  const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: false });
+  const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
   const signals = ["SIGHUP", "SIGTERM", "SIGINT"] as const;
   const onSignal = async () => {
     await onExitSignal();

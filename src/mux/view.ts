@@ -97,7 +97,7 @@ export class MuxView {
     this.overlay.left = `${(100 - width) / 2}%`;
     this.overlay.top = `${(100 - height) / 2}%`;
     const waiting = this.workspace.popupsWaiting(this.workspace.tab) - (popup.kind === "ask" ? 1 : 0);
-    pane.show(waiting > 0 ? `${popup.title} (+${waiting} waiting)` : popup.title, true);
+    pane.show(waiting > 0 ? `${popup.title} (+${waiting} waiting)` : popup.title, this.workspace.prompt === undefined);
     return true;
   }
 

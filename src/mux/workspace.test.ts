@@ -243,6 +243,26 @@ describe("Workspace", () => {
     expect(workspace.active).toBe(1);
   });
 
+  test("the project launcher takes the keys while it is open over a popup", () => {
+    const clock = { now: 0 };
+    const workspace = new Workspace(new FakeHost(), undefined, undefined, () => clock.now);
+    const popup = workspace.reservePaneId();
+    workspace.openPopup(popup, "Question", 1);
+    clock.now += 2000;
+    expect(workspace.popup?.title).toBe("Question");
+    press(workspace, "ctrl+t", "o");
+    expect(press(workspace, "m", "e")).toEqual([true, true]);
+    expect(workspace.prompt?.text).toBe("me");
+    press(workspace, "escape");
+    expect(workspace.prompt).toBeUndefined();
+    expect(press(workspace, "a")).toEqual([false]);
+    press(workspace, "ctrl+t", "o");
+    type(workspace, "merlin");
+    press(workspace, "return");
+    expect(workspace.tab.name).toBe("merlin");
+    expect(workspace.popupsWaiting(workspace.tabs[0]!)).toBe(1);
+  });
+
   test("session mode still works over a popup, so a stuck popup can be closed or detached from", () => {
     const host = new FakeHost();
     const workspace = new Workspace(host);

@@ -229,6 +229,10 @@ export class Workspace {
   }
 
   private routeKey(key: InputKey): boolean {
+    if (this.prompt) {
+      this.editPrompt(key);
+      return true;
+    }
     const popup = this.popup;
     if (popup?.kind === "view" && this.host.isHeld(popup.id)) {
       this.host.destroy(popup.id);
@@ -236,10 +240,6 @@ export class Workspace {
       return true;
     }
     if (popup && this.mode === "normal" && !popupPassthrough.has(keyName(key))) return false;
-    if (this.prompt) {
-      this.editPrompt(key);
-      return true;
-    }
     const binding = lookup(this.mode, key);
     if (binding) {
       const before = `${this.active}:${this.tab.focused}`;

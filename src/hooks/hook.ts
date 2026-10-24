@@ -2,6 +2,7 @@ import { ask } from "../ask/ask.ts";
 import { AskStore, type AskStatus } from "../ask/store.ts";
 import type { FormSpec } from "../form/schema.ts";
 import { ControlError, sendControl, type ControlRequest } from "../mux/control.ts";
+import { attachedPaneEnv } from "./attached.ts";
 
 export type HookInput = { hook_event_name?: string; message?: string; notification_type?: string; [key: string]: unknown };
 
@@ -224,14 +225,19 @@ function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
   return items.filter((item) => !seen.has(key(item)) && seen.add(key(item)));
 }
 
-export async function runHook(stdin: string, env: Record<string, string | undefined>): Promise<string | undefined> {
-  const pane = qmuxPane(env);
-  if (!pane) return undefined;
+export async function runHook(stdin: string, env: Record<string, string | undefined>, procDir?: string): Promise<string | undefined> {
   let input: HookInput;
   try {
     input = JSON.parse(stdin) as HookInput;
   } catch {
     return undefined;
+  }
+  let pane = qmuxPane(env);
+  if (!pane) {
+    const attached = attachedPaneEnv(input.session_id, procDir);
+    pane = attached && qmuxPane(attached);
+    if (!pane) return undefined;
+    Object.assign(process.env, attached);
   }
   if (input.hook_event_name === "PermissionRequest" && input.tool_name === "ExitPlanMode") {
     const decision = await askPlan(pane, input as unknown as PlanInput);

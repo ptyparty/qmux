@@ -226,7 +226,7 @@ const defaultPopupSize = { width: 80, height: 80 };
 const agentBadges: Record<AgentState, string> = { working: "🧠", waiting: "!", done: "🚀", failed: "✗" };
 const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done", failed: "failed" };
 const agentColors: Record<AgentState, string> = { working: theme.accent, waiting: theme.warning, done: theme.modes.normal, failed: theme.modes.locked };
-const commandBadges: Record<CommandState, string> = { running: "⏳", succeeded: "⭐", failed: "💥" };
+const commandBadges: Record<CommandState, string> = { running: "⏳", succeeded: "🎉", failed: "💥" };
 const commandLabels: Record<CommandState, string> = { running: "running", succeeded: "succeeded", failed: "failed" };
 const commandColors: Record<CommandState, string> = { running: theme.accent, succeeded: theme.modes.normal, failed: theme.modes.locked };
 

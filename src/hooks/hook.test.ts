@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskStore } from "../ask/store.ts";
@@ -78,6 +78,29 @@ describe("qmux hook", () => {
     expect(decision({ decision: "keep", feedback: "" })).toEqual({ behavior: "deny", message: "The user wants to keep planning." });
     expect(decision("dismissed")).toEqual({ behavior: "deny", message: "The user dismissed the plan.", interrupt: true });
     expect(decision({})).toBeUndefined();
+  });
+
+  test("a background session's hook reports to the pane it is attached in", async () => {
+    const socket = join(dir, "attached.sock");
+    const proc = join(dir, "proc");
+    mkdirSync(join(proc, "42"), { recursive: true });
+    writeFileSync(join(proc, "42", "cmdline"), "claude\0attach\0e3002ad1\0");
+    writeFileSync(join(proc, "42", "environ"), `QMUX_SOCKET=${socket}\0QMUX_PANE_ID=7\0`);
+    const requests: ControlRequest[] = [];
+    const server = serveControl(socket, (request) => {
+      requests.push(request);
+      return { ok: true };
+    });
+    const previousSocket = process.env.QMUX_SOCKET;
+    const previousPane = process.env.QMUX_PANE_ID;
+    try {
+      await runHook(JSON.stringify({ hook_event_name: "Stop", session_id: "e3002ad1-66a9-4a1c" }), {}, proc);
+    } finally {
+      server.stop();
+      restore("QMUX_SOCKET", previousSocket);
+      restore("QMUX_PANE_ID", previousPane);
+    }
+    expect(requests).toEqual([{ method: "agent.state", params: { paneId: 7, state: "done" } }]);
   });
 
   test("does nothing outside qmux", async () => {

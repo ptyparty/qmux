@@ -103,6 +103,27 @@ describe("qmux hook", () => {
     expect(requests).toEqual([{ method: "agent.state", params: { paneId: 7, state: "done" } }]);
   });
 
+  test("a prompt tells the agent about forms closed while it was not waiting", async () => {
+    const env = { QMUX_SOCKET: join(dir, "missing.sock"), QMUX_PANE_ID: "9", QMUX_STATE_DIR: join(dir, "notice-state") };
+    const previous = process.env.QMUX_STATE_DIR;
+    process.env.QMUX_STATE_DIR = env.QMUX_STATE_DIR;
+    try {
+      const store = new AskStore();
+      const owner = { socket: env.QMUX_SOCKET, paneId: 9 };
+      const dismissed = await store.create({ title: "Which branch?", elements: [] }, "qmux", owner);
+      const answered = await store.create({ title: "Ship it?", elements: [] }, "qmux", owner);
+      await store.complete(dismissed.id, { status: "cancelled" });
+      await store.complete(answered.id, { status: "submitted", values: { ship: true } });
+      const prompt = JSON.stringify({ hook_event_name: "UserPromptSubmit" });
+      const context = JSON.parse((await runHook(prompt, env))!).hookSpecificOutput.additionalContext;
+      expect(context).toContain(`"Which branch?" (${dismissed.id}) was dismissed`);
+      expect(context).toContain(`"Ship it?" (${answered.id}) was answered: {"ship":true}`);
+      expect(await runHook(prompt, env)).toBeUndefined();
+    } finally {
+      restore("QMUX_STATE_DIR", previous);
+    }
+  });
+
   test("does nothing outside qmux", async () => {
     expect(await runHook(JSON.stringify({ hook_event_name: "Stop" }), {})).toBeUndefined();
   });

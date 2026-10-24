@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ensurePrivateDir, runtimeDir } from "../private-dir.ts";
 import type { FormResult } from "../form/controller.ts";
@@ -7,7 +7,11 @@ import { parseFormSpec, type FormSpec } from "../form/schema.ts";
 
 export type AskStatus = FormResult | { status: "pending" };
 
-export type AskMeta = { id: string; title: string; createdAt: string; host: string };
+export type AskOwner = { socket: string; paneId: number };
+
+export type AskMeta = { id: string; title: string; createdAt: string; host: string; owner?: AskOwner };
+
+export type UnseenResult = { meta: AskMeta; result: FormResult };
 
 const idPattern = /^[a-z0-9]+-[0-9a-f]{8}$/;
 const pruneAgeMs = 24 * 60 * 60 * 1000;
@@ -27,10 +31,10 @@ export class AskStore {
     ensurePrivateDir(root);
   }
 
-  async create(spec: FormSpec, host: string): Promise<AskMeta> {
+  async create(spec: FormSpec, host: string, owner?: AskOwner): Promise<AskMeta> {
     this.prune();
     const id = `${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
-    const meta: AskMeta = { id, title: spec.title, createdAt: new Date().toISOString(), host };
+    const meta: AskMeta = { id, title: spec.title, createdAt: new Date().toISOString(), host, ...(owner && { owner }) };
     mkdirSync(this.dir(id), { mode: 0o700 });
     await Bun.write(join(this.dir(id), "spec.json"), JSON.stringify(spec, null, 2));
     await Bun.write(join(this.dir(id), "meta.json"), JSON.stringify(meta, null, 2));
@@ -73,7 +77,11 @@ export class AskStore {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const status = await this.status(id);
-      if (status.status !== "pending" || Date.now() >= deadline) return status;
+      if (status.status !== "pending") {
+        this.claim(id);
+        return status;
+      }
+      if (Date.now() >= deadline) return status;
       await Bun.sleep(Math.min(pollMs, Math.max(deadline - Date.now(), 0)));
     }
   }
@@ -82,6 +90,27 @@ export class AskStore {
     const metas = await Promise.all(this.ids().map((id) => this.meta(id)));
     const statuses = await Promise.all(metas.map((meta) => this.status(meta.id)));
     return metas.filter((_, index) => statuses[index]?.status === "pending");
+  }
+
+  async claimUnseen(owner: AskOwner): Promise<UnseenResult[]> {
+    const metas = await Promise.all(this.ids().map((id) => this.meta(id)));
+    const unseen: UnseenResult[] = [];
+    for (const meta of metas) {
+      if (meta.owner?.socket !== owner.socket || meta.owner.paneId !== owner.paneId) continue;
+      const status = await this.status(meta.id);
+      if (status.status !== "pending" && this.claim(meta.id)) unseen.push({ meta, result: status });
+    }
+    return unseen.sort((a, b) => a.meta.createdAt.localeCompare(b.meta.createdAt));
+  }
+
+  private claim(id: string): boolean {
+    try {
+      closeSync(openSync(join(this.dir(id), "seen"), "wx"));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
   }
 
   private ids(): string[] {

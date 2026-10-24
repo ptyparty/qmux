@@ -1,6 +1,6 @@
 import type { FormSpec } from "../form/schema.ts";
 import { launchForm, resolveHost, type HostName, type Launch } from "./hosts.ts";
-import type { AskStatus, AskStore } from "./store.ts";
+import type { AskOwner, AskStatus, AskStore } from "./store.ts";
 
 export class AlreadyAnsweredError extends Error {}
 
@@ -8,7 +8,7 @@ export type AskOutcome = { id: string; launch: Launch; status: AskStatus };
 
 export async function ask(store: AskStore, spec: FormSpec, host: HostName, waitMs: number): Promise<AskOutcome> {
   const resolved = resolveHost(host);
-  const meta = await store.create(spec, resolved);
+  const meta = await store.create(spec, resolved, askOwner(process.env));
   let launch: Launch;
   try {
     launch = await launchForm(resolved, meta.id, spec.title, store.root);
@@ -16,8 +16,13 @@ export async function ask(store: AskStore, spec: FormSpec, host: HostName, waitM
     store.remove(meta.id);
     throw error;
   }
-  const status = waitMs > 0 ? await store.wait(meta.id, waitMs) : await store.status(meta.id);
-  return { id: meta.id, launch, status };
+  return { id: meta.id, launch, status: await store.wait(meta.id, waitMs) };
+}
+
+export function askOwner(env: Record<string, string | undefined>): AskOwner | undefined {
+  const paneId = Number(env.QMUX_PANE_ID);
+  if (!env.QMUX_SOCKET || !env.QMUX_PANE_ID || !Number.isInteger(paneId)) return undefined;
+  return { socket: env.QMUX_SOCKET, paneId };
 }
 
 export async function reopen(store: AskStore, id: string, host: HostName): Promise<Launch> {

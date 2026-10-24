@@ -1,5 +1,5 @@
 import { ask } from "../ask/ask.ts";
-import { AskStore, type AskStatus } from "../ask/store.ts";
+import { AskStore, type AskStatus, type UnseenResult } from "../ask/store.ts";
 import type { FormSpec } from "../form/schema.ts";
 import { ControlError, sendControl, type ControlRequest } from "../mux/control.ts";
 import { attachedPaneEnv } from "./attached.ts";
@@ -253,7 +253,21 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
   }
   const update = stateForEvent(input);
   if (update) await reportState(pane, update.state, update.detail);
+  if (input.hook_event_name === "UserPromptSubmit") {
+    const notice = unseenNotice(await new AskStore().claimUnseen(pane));
+    return notice && JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: notice } });
+  }
   return undefined;
+}
+
+export function unseenNotice(unseen: UnseenResult[]): string | undefined {
+  if (unseen.length === 0) return undefined;
+  const lines = unseen.map(({ meta, result }) =>
+    result.status === "submitted"
+      ? `- "${meta.title}" (${meta.id}) was answered: ${JSON.stringify(result.values)}`
+      : `- "${meta.title}" (${meta.id}) was dismissed without an answer. Its popup is closed.`,
+  );
+  return ["qmux forms you opened were closed since you last checked on them:", ...lines].join("\n");
 }
 
 function summarizeToolInput(toolInput: Record<string, unknown>): string {

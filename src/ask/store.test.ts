@@ -41,6 +41,25 @@ describe("AskStore", () => {
     expect(await store.wait(id, 2000, 10)).toEqual({ status: "cancelled" });
   });
 
+  test("results the asking pane has not seen are handed over once", async () => {
+    const owner = { socket: "/run/qmux.sock", paneId: 3 };
+    const answered = await store.create(spec, "qmux", owner);
+    const dismissed = await store.create(spec, "qmux", owner);
+    const waitedOn = await store.create(spec, "qmux", owner);
+    const open = await store.create(spec, "qmux", owner);
+    const elsewhere = await store.create(spec, "qmux", { socket: owner.socket, paneId: 4 });
+    for (const meta of [answered, waitedOn, elsewhere]) await store.complete(meta.id, { status: "submitted", values: { ok: true } });
+    await store.complete(dismissed.id, { status: "cancelled" });
+    await store.wait(waitedOn.id, 0);
+    const unseen = await store.claimUnseen(owner);
+    expect(unseen.map(({ meta, result }) => [meta.id, result.status])).toEqual([
+      [answered.id, "submitted"],
+      [dismissed.id, "cancelled"],
+    ]);
+    expect(await store.claimUnseen(owner)).toEqual([]);
+    expect(await store.status(open.id)).toEqual({ status: "pending" });
+  });
+
   test("wait gives up after the timeout", async () => {
     const { id } = await store.create(spec, "none");
     const started = Date.now();

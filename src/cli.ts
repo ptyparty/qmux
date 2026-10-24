@@ -22,6 +22,9 @@ Usage:
       End a session and every program running in it.
   qmux project NAME|PATH
       From inside a session, open a project in a new tab, or switch to its tab if it is open.
+  qmux pane open [--right|--below|--tab|--popup] [--name NAME] [--no-focus] [--width PCT] [--height PCT] -- COMMAND...
+      From inside a session, open a pane running COMMAND beside this one, or over this tab with --popup.
+      A popup closes when COMMAND succeeds; --width and --height size it. Prints the new pane's id.
   qmux ask [spec.json|-] [--wait] [--timeout SECONDS] [--host auto|qmux|zellij|tmux|none]
       Open a form for the user and print {"id", "host", "message", "status", ...}.
       With --wait, block until the user answers (or the timeout passes).
@@ -77,6 +80,8 @@ async function main(argv: string[]): Promise<void> {
       return quitSession(requireName(rest));
     case "project":
       return projectCommand(rest);
+    case "pane":
+      return paneCommand(rest);
     case "server":
       return (await import("./mux/session/server.ts")).runServer(requireName(rest));
     case "help":
@@ -183,6 +188,44 @@ async function projectCommand(args: string[]): Promise<void> {
     throw new SessionError(error.message);
   });
   if (!response.ok) throw new SessionError(response.error);
+}
+
+async function paneCommand(args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== "open") throw new UsageError(`unknown pane command ${subcommand ?? ""}`.trim());
+  const { values, positionals } = parse(rest, {
+    right: { type: "boolean" },
+    below: { type: "boolean" },
+    tab: { type: "boolean" },
+    popup: { type: "boolean" },
+    width: { type: "string" },
+    height: { type: "string" },
+    name: { type: "string" },
+    "no-focus": { type: "boolean" },
+  });
+  const placements = (["right", "below", "tab", "popup"] as const).filter((placement) => values[placement]);
+  if (placements.length > 1) throw new UsageError("pick one of --right, --below, --tab, and --popup");
+  const width = percent(values.width, "--width");
+  const height = percent(values.height, "--height");
+  if (positionals.length === 0) throw new UsageError("missing the command to run in the pane");
+  const socket = process.env.QMUX_SOCKET;
+  const near = Number(process.env.QMUX_PANE_ID);
+  if (!socket || !Number.isInteger(near)) throw new UsageError("qmux pane open works from inside a qmux pane");
+  const response = await sendControl(socket, {
+    method: "pane.open",
+    params: { command: positionals, near, placement: placements[0] ?? "right", name: values.name, focus: !values["no-focus"], width, height },
+  }).catch((error: Error) => {
+    throw new SessionError(error.message);
+  });
+  if (!response.ok) throw new SessionError(response.error);
+  console.log((response.result as { paneId: number }).paneId);
+}
+
+function percent(value: string | undefined, flag: string): number | undefined {
+  if (value === undefined) return undefined;
+  const number = Number(value.replace(/%$/, ""));
+  if (!Number.isFinite(number) || number < 10 || number > 100) throw new UsageError(`${flag} takes a percentage from 10 to 100`);
+  return number;
 }
 
 async function listCommand(): Promise<void> {

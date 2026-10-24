@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ControlError, sendControl, serveControl, type ControlRequest } from "./control.ts";
+import { ControlError, controlRequest, sendControl, serveControl, type ControlRequest } from "./control.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-control-"));
 const path = join(dir, "mux.sock");
@@ -24,6 +24,14 @@ describe("control socket", () => {
     const request: ControlRequest = { method: "popup.open", params: { title: "Pick", command: ["true"] } };
     expect(await sendControl(path, request)).toEqual({ ok: true });
     expect(received).toEqual([request]);
+  });
+
+  test("pane.open defaults to a focused pane on the right", () => {
+    expect(controlRequest.parse({ method: "pane.open", params: { command: ["htop"], near: 3 } })).toEqual({
+      method: "pane.open",
+      params: { command: ["htop"], near: 3, placement: "right", focus: true },
+    });
+    expect(controlRequest.safeParse({ method: "pane.open", params: { command: ["htop"], near: 3, placement: "left" } }).success).toBe(false);
   });
 
   test("rejects malformed requests without calling the handler", async () => {

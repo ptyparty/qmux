@@ -2,7 +2,7 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 
-export type Project = { name: string; dir: string };
+export type Project = { name: string; dir: string; layout?: string };
 
 export function expandHome(path: string): string {
   if (path === "~") return homedir();

@@ -91,7 +91,12 @@ export class MuxView {
     }
     this.overlay.visible = pane !== undefined;
     if (!pane) return false;
-    const waiting = this.workspace.popupsWaiting(this.workspace.tab) - 1;
+    const { width, height } = popup.size ?? defaultPopupSize;
+    this.overlay.width = `${width}%`;
+    this.overlay.height = `${height}%`;
+    this.overlay.left = `${(100 - width) / 2}%`;
+    this.overlay.top = `${(100 - height) / 2}%`;
+    const waiting = this.workspace.popupsWaiting(this.workspace.tab) - (popup.kind === "ask" ? 1 : 0);
     pane.show(waiting > 0 ? `${popup.title} (+${waiting} waiting)` : popup.title, true);
     return true;
   }
@@ -178,7 +183,8 @@ export class MuxView {
       parts.push(paint(` ${index + 1} ${tab.name}${asking}`, theme.muted));
       const command = this.workspace.tabCommandState(tab);
       if (attention) parts.push(paint(` ${agentBadges[attention]}`, agentColors[attention]));
-      if (command) parts.push(paint(` ${commandBadges[command]}`, commandColors[command]));
+      const failed = command === "failed" || this.workspace.failedServices.has(tab.id) ? "failed" : command;
+      if (failed) parts.push(paint(` ${commandBadges[failed]}`, commandColors[failed]));
       parts.push(paint(" ", theme.muted), " ");
     });
     if (this.workspace.clients > 1) parts.push(fg(theme.warning)(` ${this.workspace.clients} terminals attached `));
@@ -216,6 +222,7 @@ function modeFocusColor(mode: Mode): string {
   return mode === "normal" ? theme.accent : theme.modes[mode];
 }
 
+const defaultPopupSize = { width: 80, height: 80 };
 const agentBadges: Record<AgentState, string> = { working: "🧠", waiting: "!", done: "🚀", failed: "✗" };
 const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done", failed: "failed" };
 const agentColors: Record<AgentState, string> = { working: theme.accent, waiting: theme.warning, done: theme.modes.normal, failed: theme.modes.locked };

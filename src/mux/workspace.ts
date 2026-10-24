@@ -1,11 +1,12 @@
 import { addToFirstTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
-import { defaultConfig, planLayout, type Config, type LayoutSpec } from "./config.ts";
+import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type LayoutEntry, type ServiceSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
 
-export type Popup = { id: PaneId; title: string; tabId: number; askingPane?: PaneId };
+export type PopupSize = { width: number; height: number };
+export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view"; askingPane?: PaneId; size?: PopupSize };
 
 export const agentStates = ["working", "waiting", "done", "failed"] as const;
 export type AgentState = (typeof agentStates)[number];
@@ -26,8 +27,12 @@ export type Prompt = {
   selected: number;
 };
 
+export type PanePlacement = "right" | "below" | "tab";
+
 export interface PaneHost {
-  create(id: PaneId, cwd: string | undefined, command?: string[]): void;
+  create(id: PaneId, cwd: string | undefined, command: string[] | undefined, tabId: number): void;
+  startServices(tabId: number, services: ServiceSpec[], cwd: string | undefined): void;
+  stopServices(tabId: number): void;
   projects(): Project[];
   destroy(id: PaneId): void;
   closePopup(id: PaneId): void;
@@ -56,6 +61,7 @@ export class Workspace {
   readonly popups: Popup[] = [];
   readonly agents = new Map<PaneId, AgentState>();
   readonly commands = new Map<PaneId, CommandState>();
+  readonly failedServices = new Map<number, string>();
   private nextPaneId = 1;
   private nextTabNumber = 1;
   private lastKeyAt = Number.NEGATIVE_INFINITY;
@@ -69,7 +75,11 @@ export class Workspace {
     private readonly config: Config = defaultConfig,
     private readonly now: () => number = Date.now,
   ) {
-    this.openTab(initialCwd);
+    const startup = namedTabs(config).filter((tab) => config.startup.includes(tab.name));
+    startup.sort((a, b) => config.startup.indexOf(a.name) - config.startup.indexOf(b.name));
+    if (startup.length === 0) this.openTab(initialCwd);
+    for (const tab of startup) this.openTab(tab.dir, { name: tab.name, layout: projectLayout(config, tab) });
+    this.active = 0;
     this.selectFocusedTabs();
   }
 
@@ -78,6 +88,8 @@ export class Workspace {
   }
 
   get popup(): Popup | undefined {
+    const view = this.popups.find((candidate) => candidate.tabId === this.tab.id && candidate.kind === "view");
+    if (view) return view;
     const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id);
     if (!popup) return undefined;
     if (!this.shownPopups.has(popup.id) && this.popupDelayLeft(popup) > 0) return undefined;
@@ -87,7 +99,7 @@ export class Workspace {
 
   popupWaitMs(): number | undefined {
     const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id);
-    if (!popup || this.shownPopups.has(popup.id)) return undefined;
+    if (!popup || popup.kind === "view" || this.shownPopups.has(popup.id)) return undefined;
     return Math.max(this.popupDelayLeft(popup), 0);
   }
 
@@ -96,7 +108,7 @@ export class Workspace {
   }
 
   popupsWaiting(tab: Tab): number {
-    return this.popups.filter((popup) => popup.tabId === tab.id).length;
+    return this.popups.filter((popup) => popup.tabId === tab.id && popup.kind === "ask").length;
   }
 
   reservePaneId(): PaneId {
@@ -105,8 +117,15 @@ export class Workspace {
 
   openPopup(id: PaneId, title: string, askingPane?: PaneId): boolean {
     const owner = this.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane)) ?? this.tab;
-    this.popups.push({ id, title, tabId: owner.id, askingPane });
+    this.popups.push({ id, title, tabId: owner.id, kind: "ask", askingPane });
     return owner !== this.tab || (askingPane !== undefined && askingPane !== this.tab.focused);
+  }
+
+  openViewPopup(id: PaneId, title: string, near: PaneId, size?: PopupSize): number | undefined {
+    const owner = this.tabs.find((tab) => paneIds(tab.root).includes(near));
+    if (!owner) return undefined;
+    this.popups.push({ id, title, tabId: owner.id, kind: "view", size });
+    return owner.id;
   }
 
   popupExited(id: PaneId): void {
@@ -175,7 +194,8 @@ export class Workspace {
     const order = this.tabs.flatMap((tab, index) => paneIds(tab.root).map((id) => ({ index, id })));
     const start = order.findIndex((entry) => entry.index === this.active && entry.id === this.tab.focused);
     const rotated = [...order.slice(start + 1), ...order.slice(0, start + 1)];
-    const asking = new Set(this.popups.map((popup) => popup.askingPane ?? this.tabs.find((tab) => tab.id === popup.tabId)?.focused));
+    const asks = this.popups.filter((popup) => popup.kind === "ask");
+    const asking = new Set(asks.map((popup) => popup.askingPane ?? this.tabs.find((tab) => tab.id === popup.tabId)?.focused));
     const needs = (id: PaneId) => asking.has(id) || this.agents.get(id) === "waiting";
     const finished = (id: PaneId) => this.agents.get(id) === "done" || this.agents.get(id) === "failed" || this.commandFinished(id);
     const target = rotated.find((entry) => needs(entry.id)) ?? rotated.find((entry) => finished(entry.id));
@@ -208,7 +228,13 @@ export class Workspace {
   }
 
   private routeKey(key: InputKey): boolean {
-    if (this.popup && this.mode === "normal" && !popupPassthrough.has(keyName(key))) return false;
+    const popup = this.popup;
+    if (popup?.kind === "view" && this.host.isHeld(popup.id)) {
+      this.host.destroy(popup.id);
+      this.popupExited(popup.id);
+      return true;
+    }
+    if (popup && this.mode === "normal" && !popupPassthrough.has(keyName(key))) return false;
     if (this.prompt) {
       this.editPrompt(key);
       return true;
@@ -258,16 +284,45 @@ export class Workspace {
   }
 
   openProject(target: string): string | undefined {
-    const project = resolveTarget(target.trim(), this.host.cwd(this.tab.focused) ?? process.cwd(), this.host.projects());
+    const project = resolveTarget(target.trim(), this.host.cwd(this.tab.focused) ?? process.cwd(), this.projects());
     if (!project) return `No project matches ${JSON.stringify(target.trim())}`;
     const existing = this.tabs.findIndex((tab) => tab.name === project.name);
     if (existing >= 0) this.active = existing;
     else {
-      const layout = this.config.projects.layout ? this.config.layouts[this.config.projects.layout] : undefined;
-      this.openTab(project.dir, { name: project.name, layout });
+      this.openTab(project.dir, { name: project.name, layout: projectLayout(this.config, project) });
     }
     this.selectFocusedTabs();
     return undefined;
+  }
+
+  openPaneNear(near: PaneId, placement: PanePlacement, command: string[], options: { name?: string; focus?: boolean } = {}): PaneId | undefined {
+    const index = this.tabs.findIndex((tab) => paneIds(tab.root).includes(near));
+    if (index < 0) return undefined;
+    const tab = this.tabs[index]!;
+    const id = this.nextPaneId++;
+    tab.root = placement === "tab" ? addPaneTab(tab.root, near, id) : splitPane(tab.root, near, placement === "right" ? "row" : "column", id);
+    tab.zoomed = false;
+    if (options.name) this.paneNames.set(id, options.name);
+    this.host.create(id, this.host.cwd(near), command, tab.id);
+    if (options.focus ?? true) {
+      this.active = index;
+      tab.focused = id;
+    }
+    this.selectFocusedTabs();
+    return id;
+  }
+
+  serviceFailed(tabId: number, service: string, detail: string): void {
+    const tab = this.tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    this.failedServices.set(tabId, service);
+    this.message = `The ${service} service in ${tab.name} stopped: ${detail}`;
+  }
+
+  private projects(): Project[] {
+    const named = namedTabs(this.config);
+    const names = new Set(named.map((tab) => tab.name));
+    return [...named, ...this.host.projects().filter((project) => !names.has(project.name))];
   }
 
   paneExited(id: PaneId): void {
@@ -319,7 +374,7 @@ export class Workspace {
       case "new-tab":
         return this.openTab(this.config.defaultCwd ? expandHome(this.config.defaultCwd) : this.host.cwd(this.tab.focused));
       case "open-project": {
-        const candidates = this.host.projects();
+        const candidates = this.projects();
         this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates.slice(0, shownMatches), selected: 0 };
         return;
       }
@@ -371,7 +426,7 @@ export class Workspace {
     const cwd = this.host.cwd(tab.focused);
     tab.focused = id;
     tab.zoomed = false;
-    this.host.create(id, cwd);
+    this.host.create(id, cwd, undefined, tab.id);
   }
 
   private preferredAxis(tab: Tab): Axis {
@@ -380,16 +435,18 @@ export class Workspace {
     return rect.width * cols > rect.height * rows * 2.2 ? "row" : "column";
   }
 
-  private openTab(cwd: string | undefined, options: { name?: string; layout?: LayoutSpec } = {}): void {
+  private openTab(cwd: string | undefined, options: { name?: string; layout?: LayoutEntry } = {}): void {
     const number = this.nextTabNumber++;
-    const plan = planLayout(options.layout ?? {}, () => this.nextPaneId++);
+    const plan = planLayout(options.layout?.layout ?? {}, () => this.nextPaneId++);
     const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: plan.root, focused: plan.focus, zoomed: false };
     this.tabs.splice(this.tabs.length === 0 ? 0 : this.active + 1, 0, tab);
     this.active = this.tabs.length === 1 ? 0 : this.active + 1;
     for (const pane of plan.panes) {
       if (pane.name) this.paneNames.set(pane.id, pane.name);
-      this.host.create(pane.id, cwd, pane.command);
+      this.host.create(pane.id, cwd, pane.command, tab.id);
     }
+    const services = options.layout?.services ?? [];
+    if (services.length > 0) this.host.startServices(tab.id, services, cwd);
   }
 
   private moveTab(delta: number): void {
@@ -401,7 +458,9 @@ export class Workspace {
   }
 
   private removeTab(index: number): void {
-    this.tabs.splice(index, 1);
+    const [removed] = this.tabs.splice(index, 1);
+    this.host.stopServices(removed!.id);
+    this.failedServices.delete(removed!.id);
     if (this.tabs.length === 0) {
       this.quit = true;
       return;

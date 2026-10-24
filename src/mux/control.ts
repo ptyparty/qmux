@@ -11,6 +11,18 @@ export const controlRequest = z.discriminatedUnion("method", [
     method: z.literal("agent.state"),
     params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional() }),
   }),
+  z.object({
+    method: z.literal("pane.open"),
+    params: z.object({
+      command: z.array(z.string()).min(1),
+      near: z.number().int(),
+      placement: z.enum(["right", "below", "tab", "popup"]).default("right"),
+      name: z.string().optional(),
+      focus: z.boolean().default(true),
+      width: z.number().min(10).max(100).optional().describe("Popup width, percent of the screen"),
+      height: z.number().min(10).max(100).optional().describe("Popup height, percent of the screen"),
+    }),
+  }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),
 ]);

@@ -13,9 +13,19 @@ class FakeHost implements PaneHost {
     { name: "penguin-auth", dir: "/work/stories/penguin-auth" },
     { name: "merlin", dir: "/work/exfresso/merlin" },
   ];
-  create(id: number, cwd: string | undefined, command?: string[]): void {
+  tabOf = new Map<number, number>();
+  create(id: number, cwd: string | undefined, command: string[] | undefined, tabId: number): void {
     this.created.push([id, cwd]);
     this.commands.set(id, command);
+    this.tabOf.set(id, tabId);
+  }
+  started: [number, string[][], string | undefined][] = [];
+  stopped: number[] = [];
+  startServices(tabId: number, services: { command: string[] }[], cwd: string | undefined): void {
+    this.started.push([tabId, services.map((service) => service.command), cwd]);
+  }
+  stopServices(tabId: number): void {
+    this.stopped.push(tabId);
   }
   projects(): Project[] {
     return this.knownProjects;
@@ -268,6 +278,126 @@ describe("Workspace", () => {
     expect([host.commands.get(2), host.commands.get(3), host.commands.get(4)]).toEqual([["dev", "claude"], ["remax"], undefined]);
   });
 
+  describe("tab services", () => {
+    const config = configSchema.parse({
+      projects: { layout: "ide", layoutFor: { merlin: "served" } },
+      layouts: {
+        ide: { row: [{}, {}] },
+        served: { services: [{ command: ["q-space", "serve"] }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
+      },
+    });
+
+    test("a project's own layout starts its services with the tab, and other projects use the default layout", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home", config);
+      workspace.openProject("penguin");
+      expect(host.started).toEqual([]);
+      workspace.openProject("merlin");
+      const merlin = workspace.tab;
+      expect(host.started).toEqual([[merlin.id, [["q-space", "serve"]], "/work/exfresso/merlin"]]);
+      expect(paneIds(merlin.root).map((id) => host.tabOf.get(id))).toEqual([merlin.id, merlin.id]);
+    });
+
+    test("closing the tab stops its services", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home", config);
+      workspace.openProject("merlin");
+      const id = workspace.tab.id;
+      press(workspace, "ctrl+t", "x");
+      type(workspace, "merlin");
+      press(workspace, "return");
+      expect(host.stopped).toEqual([id]);
+    });
+
+    test("the last pane exiting stops the tab's services", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home", config);
+      workspace.openProject("merlin");
+      const tab = workspace.tab;
+      for (const pane of paneIds(tab.root)) workspace.paneExited(pane);
+      expect(host.stopped).toEqual([tab.id]);
+      expect(workspace.tabs).not.toContain(tab);
+    });
+
+    test("a service that stops on its own marks its tab", () => {
+      const workspace = new Workspace(new FakeHost(), "/home", config);
+      workspace.openProject("merlin");
+      workspace.serviceFailed(workspace.tab.id, "q-space", "exited with code 1");
+      expect(workspace.failedServices.get(workspace.tab.id)).toBe("q-space");
+      expect(workspace.message).toBe("The q-space service in merlin stopped: exited with code 1");
+    });
+  });
+
+  describe("named tabs", () => {
+    const config = configSchema.parse({
+      layouts: {
+        "q-space": { services: [{ command: ["q-space", "serve"] }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
+        logs: { row: [{}] },
+      },
+      tabs: { "q-space": { layout: "q-space", cwd: "/home/me/q-space" }, logs: { layout: "logs", cwd: "/var/log" }, penguin: { layout: "logs", cwd: "/elsewhere" } },
+      startup: ["logs", "q-space"],
+    });
+
+    test("startup tabs replace the plain first tab, in order, with the first focused", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home", config);
+      expect(workspace.tabs.map((tab) => tab.name)).toEqual(["logs", "q-space"]);
+      expect(workspace.active).toBe(0);
+      expect(host.created).toEqual([
+        [1, "/var/log"],
+        [2, "/home/me/q-space"],
+        [3, "/home/me/q-space"],
+      ]);
+      expect(host.started).toEqual([[workspace.tabs[1]!.id, [["q-space", "serve"]], "/home/me/q-space"]]);
+    });
+
+    test("named tabs lead the launcher and hide a project of the same name", () => {
+      const workspace = new Workspace(new FakeHost(), "/home", config);
+      press(workspace, "ctrl+t", "o");
+      expect(workspace.prompt?.candidates?.map((candidate) => `${candidate.name} ${candidate.dir}`)).toEqual([
+        "q-space /home/me/q-space",
+        "logs /var/log",
+        "penguin /elsewhere",
+        "penguin-auth /work/stories/penguin-auth",
+        "merlin /work/exfresso/merlin",
+      ]);
+    });
+
+    test("a closed named tab reopens with its layout and services", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home", config);
+      workspace.active = 1;
+      press(workspace, "ctrl+t", "x");
+      type(workspace, "q-space");
+      press(workspace, "return");
+      expect(workspace.tabs.map((tab) => tab.name)).toEqual(["logs"]);
+      expect(workspace.openProject("q-space")).toBeUndefined();
+      expect(workspace.tabs.map((tab) => tab.name)).toEqual(["logs", "q-space"]);
+      expect(host.started.map(([, commands, cwd]) => [commands, cwd])).toEqual([
+        [[["q-space", "serve"]], "/home/me/q-space"],
+        [[["q-space", "serve"]], "/home/me/q-space"],
+      ]);
+    });
+  });
+
+  test("opening a pane near another places it beside that pane in its tab", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    press(workspace, "ctrl+t", "c");
+    expect(workspace.openPaneNear(1, "right", ["q-space", "pane", "comments"], { name: "comments" })).toBe(3);
+    expect([workspace.active, workspace.tab.focused]).toEqual([0, 3]);
+    expect(workspace.tab.root).toMatchObject({ kind: "split", axis: "row", children: [{ id: 1 }, { id: 3 }] });
+    expect(host.tabOf.get(3)).toBe(workspace.tabs[0]!.id);
+    expect(host.commands.get(3)).toEqual(["q-space", "pane", "comments"]);
+    expect(workspace.paneNames.get(3)).toBe("comments");
+    expect(workspace.openPaneNear(3, "tab", ["htop"], { focus: false })).toBe(4);
+    expect(workspace.tab.focused).toBe(3);
+    expect(workspace.tab.root).toMatchObject({ children: [{ id: 1 }, { kind: "tabs", panes: [3, 4] }] });
+    expect(workspace.openPaneNear(1, "below", ["top"])).toBe(5);
+    expect(workspace.tab.root).toMatchObject({ children: [{ kind: "split", axis: "column", children: [{ id: 1 }, { id: 5 }] }, {}] });
+    expect(workspace.openPaneNear(99, "right", ["top"])).toBeUndefined();
+  });
+
   test("pane groups: new panes join the group, focus walks members left to right, s groups onto the focused pane", () => {
     const config = configSchema.parse({
       projects: { layout: "ide" },
@@ -357,6 +487,35 @@ describe("Workspace", () => {
     expect(workspace.popup?.title).toBe("Question");
     press(workspace, "y");
     expect(workspace.popup?.title).toBe("Question");
+  });
+
+  test("a view popup shows at once over its tab, ahead of waiting questions, without asking for attention", () => {
+    const clock = { now: 0 };
+    const host = new FakeHost();
+    const workspace = new Workspace(host, undefined, undefined, () => clock.now);
+    press(workspace, "h");
+    workspace.openPopup(workspace.reservePaneId(), "Question", 1);
+    const view = workspace.reservePaneId();
+    expect(workspace.openViewPopup(view, "Comments", 1, { width: 90, height: 90 })).toBe(workspace.tab.id);
+    expect(workspace.popup).toMatchObject({ id: view, kind: "view", size: { width: 90, height: 90 } });
+    expect(workspace.popupsWaiting(workspace.tab)).toBe(1);
+    expect(press(workspace, "j")).toEqual([false]);
+    workspace.popupExited(view);
+    expect(workspace.popup).toBeUndefined();
+    expect(workspace.openViewPopup(workspace.reservePaneId(), "Nowhere", 99)).toBeUndefined();
+  });
+
+  test("a view popup held after a failure closes on the next key", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    const view = workspace.reservePaneId();
+    workspace.openViewPopup(view, "Comments", 1);
+    expect(workspace.popupsWaiting(workspace.tab)).toBe(0);
+    expect(workspace.tabAttention(workspace.tab)).toBeUndefined();
+    host.held.add(view);
+    expect(press(workspace, "x")).toEqual([true]);
+    expect(host.destroyed).toEqual([view]);
+    expect(workspace.popup).toBeUndefined();
   });
 
   test("Alt+a takes you to a question and shows it straight away", () => {

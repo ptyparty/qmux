@@ -1,12 +1,15 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
+import { join } from "node:path";
+import { runtimeDir } from "../private-dir.ts";
 import type { Config } from "./config.ts";
 import type { ControlRequest, ControlResponse } from "./control.ts";
 import { findProjects } from "./projects.ts";
 import { paneIds, type PaneId } from "./layout.ts";
 import { Pane, type CommandEvent } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
+import { TabServices } from "./services.ts";
 import { MuxView } from "./view.ts";
-import { Workspace, type PaneHost } from "./workspace.ts";
+import { Workspace, type PaneHost, type PopupSize } from "./workspace.ts";
 
 const readBudgetMs = 6;
 const readWindowMs = 16;
@@ -33,6 +36,10 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   const scheduler = new ReadScheduler(readBudgetMs, readWindowMs);
   const panes = new Map<PaneId, Pane>();
   const paneEnv = { ...options.config.env, QMUX_SOCKET: options.controlSocket, QMUX_SESSION: options.session };
+  const services = new TabServices(join(runtimeDir(), "sessions", options.session, "tabs"), () => ({ ...process.env, ...paneEnv }), (tabId, service, detail) => {
+    workspace.serviceFailed(tabId, service, detail);
+    refresh();
+  });
   let view: MuxView | undefined;
   let stopped = false;
 
@@ -76,10 +83,13 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     if (wait !== undefined) popupTimer = setTimeout(refresh, wait + 20);
   };
 
-  const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, holdOnExit = false, frameless = false) => {
-    panes.set(id, new Pane(renderer, id, { cwd, command, env: paneEnv, holdOnExit, frameless }, scheduler, {
+  type SpawnOptions = { holdOnExit?: boolean; holdOnFailure?: boolean; frameless?: boolean; tabId?: number };
+  const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, options: SpawnOptions = {}) => {
+    const { holdOnExit, holdOnFailure, frameless, tabId } = options;
+    const env = tabId === undefined ? paneEnv : { ...paneEnv, QMUX_TAB_DIR: services.tabDir(tabId) };
+    panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless }, scheduler, {
       onHeld: () => refresh(),
-      onCommand: frameless ? undefined : commandEvent,
+      onCommand: frameless || holdOnFailure ? undefined : commandEvent,
       onExit: (exited) => {
         panes.get(exited)?.destroy();
         panes.delete(exited);
@@ -94,7 +104,9 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   };
 
   const host: PaneHost = {
-    create: (id, cwd, command) => spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), true),
+    create: (id, cwd, command, tabId) => spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), { holdOnExit: true, tabId }),
+    startServices: (tabId, specs, cwd) => services.start(tabId, specs, cwd),
+    stopServices: (tabId) => void services.stop(tabId),
     isHeld: (id) => panes.get(id)?.exited ?? false,
     rerun: (id) => panes.get(id)?.rerun(),
     replaceWithShell: (id) => panes.get(id)?.replaceWithShell(),
@@ -118,12 +130,22 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
 
   const openPopup = (title: string, command: string[], askingPane: PaneId | undefined) => {
     const id = workspace.reservePaneId();
-    spawnPane(id, host.cwd(askingPane ?? workspace.tab.focused), command, (exited) => workspace.popupExited(exited), false, true);
+    spawnPane(id, host.cwd(askingPane ?? workspace.tab.focused), command, (exited) => workspace.popupExited(exited), { frameless: true });
     if (workspace.openPopup(id, title, askingPane)) {
       const where = workspace.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane))?.name ?? "qmux";
       renderer.triggerNotification(title, where);
     }
     refresh();
+  };
+
+  const openViewPopup = (near: PaneId, command: string[], title: string, size: PopupSize | undefined): PaneId | undefined => {
+    const tabId = workspace.tabs.find((tab) => paneIds(tab.root).includes(near))?.id;
+    if (tabId === undefined) return undefined;
+    const id = workspace.reservePaneId();
+    spawnPane(id, host.cwd(near), command, (exited) => workspace.popupExited(exited), { holdOnFailure: true, tabId });
+    workspace.openViewPopup(id, title, near, size);
+    refresh();
+    return id;
   };
 
   renderer.on("focused_renderable", (renderable: unknown) => {
@@ -158,6 +180,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     renderer.keyInput.off("keypress", onKey);
     for (const pane of panes.values()) pane.destroy();
     panes.clear();
+    void services.stopAll();
   }
 
   return {
@@ -182,6 +205,15 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           const error = workspace.openProject(request.params.target);
           refresh();
           return error ? { ok: false, error } : { ok: true };
+        }
+        case "pane.open": {
+          const { near, placement, command, name, focus, width, height } = request.params;
+          const paneId =
+            placement === "popup"
+              ? openViewPopup(near, command, name ?? command.join(" "), width === undefined && height === undefined ? undefined : { width: width ?? 80, height: height ?? 80 })
+              : workspace.openPaneNear(near, placement, command, { name, focus });
+          refresh();
+          return paneId === undefined ? { ok: false, error: `no pane ${near}` } : { ok: true, result: { paneId } };
         }
         case "session.quit":
           workspace.quit = true;

@@ -51,6 +51,30 @@ Each ask is stored as a directory under `$XDG_RUNTIME_DIR/qmux/asks/<id>/`. Set 
 - **Lifecycle:** closing the form's pane records a cancel. Asks older than a day are deleted.
 - **No daemon:** `ask`, `wait`, the MCP server, and the form process share state only through these files.
 
+## Tab services
+
+A layout in `~/.config/qmux/config.ts` can list `services`: background processes that start with the tab and stop when it closes. `projects.layoutFor` picks a layout for a particular project, overriding `projects.layout`:
+
+```ts
+export default {
+  projects: { layout: "ide", layoutFor: { "q-space": "q-space" } },
+  layouts: {
+    "q-space": {
+      services: [{ command: ["q-space", "serve"], name: "server" }],
+      row: [{ command: ["q-space", "pane", "stories"], focus: true }, { column: [{ command: ["q-space", "pane", "reviews"] }, { command: ["q-space", "pane", "mentions"] }] }],
+    },
+  },
+};
+```
+
+- **Named tabs:** `tabs: { "q-space": { layout: "q-space", cwd: "~/work/flipstone/q-space" } }` defines a tab with its own layout and working directory. Named tabs appear first in the Ctrl+t o launcher and work with `qmux project`, so a closed one can be reopened, which also restarts its services.
+- **Startup:** `startup: ["q-space"]` opens those named tabs when a session starts, instead of a plain tab.
+- **Shared directory:** every pane in a tab and every service it runs get `QMUX_TAB_DIR`, a private directory for that tab. A service can put its socket there for the tab's panes to find.
+- **Stopping:** closing the tab, quitting the session, or the tab's last pane exiting sends the service's process group SIGTERM, then SIGKILL after 3 seconds. If the qmux server dies, the kernel stops its services too.
+- **Logs and failures:** a service's output goes to `$QMUX_TAB_DIR/<name>.log`. A service that exits on its own puts `💥` on its tab and names its log.
+
+From inside a pane, `qmux pane open [--right|--below|--tab] [--name NAME] [--no-focus] -- COMMAND...` opens a pane beside it in the same tab and prints the new pane's id. With `--popup` (and optionally `--width`/`--height` in percent), the command opens over the tab at once and takes the keys. The popup closes when the command exits successfully. After a failure it stays up until the next key, so the error can be read.
+
 ## Claude Code hooks
 
 `qmux hook` lets Claude Code sessions running in qmux panes report what they are doing. Point these hook events at it in `~/.claude/settings.json`: `UserPromptSubmit`, `Stop`, `SessionEnd`, `Notification` (matcher `*`) and `PermissionRequest` (matcher `*`, with a long timeout such as 3600 seconds). Use absolute paths, since hooks may not have `~/.bun/bin` on their PATH:

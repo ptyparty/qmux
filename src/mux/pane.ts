@@ -21,6 +21,7 @@ export type PaneOptions = {
   command?: string[];
   env?: Record<string, string>;
   holdOnExit?: boolean;
+  holdOnFailure?: boolean;
   frameless?: boolean;
 };
 
@@ -150,6 +151,7 @@ export class Pane {
 
   private childExited(pty: Pty, ranCommand: boolean): void {
     if (pty !== this.pty) return;
+    if (this.options.holdOnFailure) return this.holdIfFailed(pty);
     if (!ranCommand || !this.options.holdOnExit) return this.events.onExit(this.id);
     this.exitCode = null;
     this.events.onHeld(this.id);
@@ -158,6 +160,17 @@ export class Pane {
       this.exitCode = code;
       const status = code === null ? "Exited" : `Exited with code ${code}`;
       this.view.write(`\r\n\x1b[0m\x1b[2m[${status} · Enter re-run · Esc shell · Ctrl+c close]\x1b[0m`);
+      this.events.onHeld(this.id);
+    });
+  }
+
+  private holdIfFailed(pty: Pty): void {
+    pty.child.exited.then((code) => {
+      if (pty !== this.pty) return;
+      if (code === 0) return this.events.onExit(this.id);
+      this.exitCode = code;
+      const status = code === null ? "Exited" : `Exited with code ${code}`;
+      this.view.write(`\r\n\x1b[0m\x1b[2m[${status} · press any key to close]\x1b[0m`);
       this.events.onHeld(this.id);
     });
   }

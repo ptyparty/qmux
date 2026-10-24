@@ -46,6 +46,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   let popupTimer: Timer | undefined;
   const runningCommands = new Map<PaneId, { started: number; timer: Timer }>();
 
+  const copyToClipboard = (text: string) => {
+    workspace.message = renderer.copyToClipboardOSC52(text) ? `Copied ${text.length} characters` : "This terminal does not support copying (OSC 52)";
+    refresh();
+  };
+
   const commandEvent = (id: PaneId, event: CommandEvent) => {
     const running = runningCommands.get(id);
     if (running) clearTimeout(running.timer);
@@ -90,6 +95,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless }, scheduler, {
       onHeld: () => refresh(),
       onCommand: frameless || holdOnFailure ? undefined : commandEvent,
+      onClipboard: (_, text) => copyToClipboard(text),
       onExit: (exited) => {
         panes.get(exited)?.destroy();
         panes.delete(exited);
@@ -159,8 +165,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   renderer.on("selection", (selection: { getSelectedText(): string }) => {
     const text = selection.getSelectedText();
     if (text.trim() === "") return;
-    workspace.message = renderer.copyToClipboardOSC52(text) ? `Copied ${text.length} characters` : "This terminal does not support copying (OSC 52)";
-    refresh();
+    copyToClipboard(text);
   });
 
   const onKey = (key: KeyEvent) => {

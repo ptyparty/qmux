@@ -14,6 +14,7 @@ export type PaneEvents = {
   onHeld: (id: PaneId) => void;
   onClick: (id: PaneId) => void;
   onCommand?: (id: PaneId, event: CommandEvent) => void;
+  onClipboard?: (id: PaneId, text: string) => void;
 };
 
 export type PaneOptions = {
@@ -29,6 +30,10 @@ const resetTerminal = "\x1bc";
 const fishIntegration = new URL("../shell/qmux.fish", import.meta.url).pathname;
 const commandMark = /\x1b\]133;([CD])(?:;([^\x07\x1b]*))?(?:\x07|\x1b\\)/g;
 const markTailLength = 1024;
+const clipboardWrite = /\x1b\]52;[^;\x07\x1b]*;([A-Za-z0-9+/=]*)(?:\x07|\x1b\\)/g;
+const clipboardStart = "\x1b]52;";
+const clipboardPending = /\x1b\]52;[^;\x07\x1b]*(?:;[A-Za-z0-9+/=]*\x1b?)?$/;
+const clipboardTailLength = 1024 * 1024;
 const doubleClickMs = 400;
 
 export class Pane {
@@ -39,6 +44,7 @@ export class Pane {
   private exitCode: number | null | undefined;
   private command: string[] | undefined;
   private markTail = "";
+  private readonly clipboard = new ClipboardScanner();
   private lastClick = { at: 0, x: -1, y: -1 };
 
   constructor(
@@ -142,6 +148,7 @@ export class Pane {
       onData: (data) => {
         this.view.write(data);
         if (this.events.onCommand) this.scanCommandMarks(data);
+        for (const text of this.clipboard.scan(data)) this.events.onClipboard?.(this.id, text);
       },
       onExit: () => this.childExited(pty, command !== undefined),
       env: { ...paneEnvironment(this.id), ...this.options.env },
@@ -200,6 +207,25 @@ export class Pane {
     const cwd = this.cwd();
     if (!cwd) return `Pane #${this.id}`;
     return cwd === homedir() ? "~" : basename(cwd);
+  }
+}
+
+export class ClipboardScanner {
+  private tail = "";
+
+  scan(data: Uint8Array): string[] {
+    const text = this.tail + Buffer.from(data).toString("latin1");
+    const writes: string[] = [];
+    let scanned = 0;
+    for (const match of text.matchAll(clipboardWrite)) {
+      scanned = match.index! + match[0].length;
+      const decoded = Buffer.from(match[1]!, "base64").toString("utf8");
+      if (decoded !== "") writes.push(decoded);
+    }
+    const pending = text.lastIndexOf(clipboardStart);
+    const unfinished = pending >= scanned && text.length - pending <= clipboardTailLength && clipboardPending.test(text.slice(pending));
+    this.tail = unfinished ? text.slice(pending) : text.slice(Math.max(scanned, text.length - clipboardStart.length + 1));
+    return writes;
   }
 }
 

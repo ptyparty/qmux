@@ -1,6 +1,6 @@
 import type { Axis, Direction } from "./layout.ts";
 
-export type Mode = "normal" | "locked" | "pane" | "tab" | "session";
+export type Mode = "normal" | "locked" | "pane" | "tab" | "session" | "tray";
 
 export type Command =
   | { type: "mode"; mode: Mode }
@@ -22,6 +22,8 @@ export type Command =
   | { type: "close-popup" }
   | { type: "next-attention" }
   | { type: "last-tab" }
+  | { type: "select-widget"; delta: number }
+  | { type: "open-widget" }
   | { type: "quit" };
 
 export type Binding = { keys: string[]; command: Command; then?: Mode };
@@ -107,6 +109,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["r"], command: { type: "rename-tab" }, then: "normal" },
       { keys: ["o"], command: { type: "open-project" }, then: "normal" },
       { keys: ["a"], command: { type: "last-tab" }, then: "normal" },
+      { keys: ["w"], command: { type: "mode", mode: "tray" } },
       ...Array.from({ length: 9 }, (_, index): Binding => ({ keys: [String(index + 1)], command: { type: "go-to-tab", index }, then: "normal" })),
       backToNormal,
     ],
@@ -118,9 +121,19 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "r", description: "rename" },
       { keys: "o", description: "open project" },
       { keys: "a", description: "last tab" },
+      { keys: "w", description: "tray" },
       { keys: "1-9", description: "go to" },
       backHint,
     ],
+  },
+  tray: {
+    bindings: [
+      { keys: ["h", "left", "up"], command: { type: "select-widget", delta: -1 } },
+      { keys: ["s", "right", "down"], command: { type: "select-widget", delta: 1 } },
+      { keys: ["return"], command: { type: "open-widget" }, then: "normal" },
+      { keys: ["escape"], command: { type: "mode", mode: "normal" } },
+    ],
+    hints: [{ keys: "h/s", description: "prev/next widget" }, { keys: "Enter", description: "open" }, backHint],
   },
   session: {
     bindings: [

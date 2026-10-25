@@ -5,12 +5,15 @@ import { Launcher } from "./launcher.ts";
 import { paneIds, shownPaneTab, type LayoutNode, type PaneId, type TabsNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
 import { theme } from "./theme.ts";
+import type { Tray } from "./tray.ts";
 import type { AgentState, CommandState, Workspace } from "./workspace.ts";
 
 export class MuxView {
   private readonly tabBar: TextRenderable;
   private readonly body: BoxRenderable;
   private readonly modeBar: TextRenderable;
+  private readonly trayBar: TextRenderable;
+  private trayRanges: { start: number; end: number; index: number }[] = [];
   private readonly hintBar: TextRenderable;
   private readonly overlay: BoxRenderable;
   private bodySignature = "";
@@ -22,16 +25,26 @@ export class MuxView {
     private readonly renderer: CliRenderer,
     private readonly workspace: Workspace,
     private readonly panes: Map<PaneId, Pane>,
-    private readonly onFocusPane: (id: PaneId) => void,
+    private readonly tray: Tray,
+    private readonly actions: { onFocusPane: (id: PaneId) => void; onOpenWidget: (index: number) => void },
   ) {
     const root = new BoxRenderable(renderer, { flexDirection: "column", width: "100%", height: "100%", backgroundColor: theme.background });
     this.tabBar = new TextRenderable(renderer, { height: 1, bg: theme.surface });
     this.body = new BoxRenderable(renderer, { flexGrow: 1, flexDirection: "row", minHeight: 0 });
-    this.modeBar = new TextRenderable(renderer, { height: 1, bg: theme.surface });
+    const statusRow = new BoxRenderable(renderer, { height: 1, flexDirection: "row", flexShrink: 0, backgroundColor: theme.surface });
+    this.modeBar = new TextRenderable(renderer, { height: 1, flexGrow: 1, flexShrink: 1, minWidth: 0, wrapMode: "none", bg: theme.surface });
+    this.trayBar = new TextRenderable(renderer, { height: 1, flexShrink: 0, wrapMode: "none", bg: theme.surface });
+    this.trayBar.onMouseDown = (event) => {
+      const offset = event.x - this.trayBar.screenX;
+      const hit = this.trayRanges.find((range) => offset >= range.start && offset < range.end);
+      if (hit) this.actions.onOpenWidget(hit.index);
+    };
+    statusRow.add(this.modeBar);
+    statusRow.add(this.trayBar);
     this.hintBar = new TextRenderable(renderer, { height: 1, fg: theme.muted });
     root.add(this.tabBar);
     root.add(this.body);
-    root.add(this.modeBar);
+    root.add(statusRow);
     root.add(this.hintBar);
     this.overlay = new BoxRenderable(renderer, {
       position: "absolute",
@@ -59,6 +72,7 @@ export class MuxView {
     this.renderPaneTabStrips();
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();
+    this.trayBar.content = this.renderTray();
     this.hintBar.content = this.renderHints();
     this.launcher.render(this.workspace.prompt);
   }
@@ -119,7 +133,7 @@ export class MuxView {
     strip.onMouseDown = (event) => {
       const offset = event.x - strip.screenX;
       const hit = entry.ranges.find((range) => offset >= range.start && offset < range.end);
-      if (hit) this.onFocusPane(hit.id);
+      if (hit) this.actions.onFocusPane(hit.id);
     };
     this.paneTabStrips.push(entry);
     container.add(strip);
@@ -201,6 +215,26 @@ export class MuxView {
         parts.push(bold(fg(active ? theme.modes[hint.mode] : theme.accent)(hint.keys)), fg(active ? theme.text : theme.muted)(` ${hint.description}  `));
       }
     }
+    return styled(parts);
+  }
+
+  private renderTray(): StyledText {
+    const selecting = this.workspace.mode === "tray";
+    const parts: Part[] = [];
+    let column = 0;
+    this.trayRanges = [];
+    this.tray.texts.forEach((text, index) => {
+      if (text === "") return;
+      if (parts.length > 0) {
+        parts.push(fg(theme.border)("│"));
+        column += 1;
+      }
+      const label = ` ${text} `;
+      const selected = selecting && index === this.workspace.selectedWidget;
+      parts.push(selected ? bold(bg(theme.modes.tray)(fg(theme.background)(label))) : fg(theme.text)(label));
+      this.trayRanges.push({ start: column, end: column + label.length, index });
+      column += label.length;
+    });
     return styled(parts);
   }
 

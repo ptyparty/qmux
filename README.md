@@ -75,6 +75,26 @@ export default {
 
 From inside a pane, `qmux pane open [--right|--below|--tab] [--name NAME] [--no-focus] -- COMMAND...` opens a pane beside it in the same tab and prints the new pane's id. With `--popup` (and optionally `--width`/`--height` in percent), the command opens over the tab at once and takes the keys. The popup closes when the command exits successfully. After a failure it stays up until the next key, so the error can be read.
 
+## Tray
+
+The right end of the mode bar holds the tray: by default a CPU and memory widget and a clock. Click a widget, or press Ctrl+t w, pick one with h/s, and press Enter, to open its popup. The system widget opens btop, htop, or top, whichever is installed first in that order.
+
+```ts
+export default {
+  tray: [
+    { widget: "system" },
+    { name: "branch", command: ["git", "branch", "--show-current"], every: 5000 },
+    { name: "uptime", render: () => `up ${Math.round(process.uptime())}s`, open: ["htop"] },
+    { widget: "clock", format: "ddd D MMM HH:mm" },
+  ],
+};
+```
+
+- **Command widgets** show the first line a program prints. They run every `every` milliseconds (10 seconds by default) and show `!` after a failure.
+- **TypeScript widgets** call `render` every `every` milliseconds (1 second by default). It may return a promise.
+- **Popups:** `open` is the command a widget's popup runs. Widgets without one open nothing.
+- **Clock formats** use `dddd ddd YYYY MMM MM DD D HH mm ss`, on a 24 hour clock.
+
 ## Images
 
 When the terminal qmux is attached to supports kitty graphics, programs in panes can show images using kitty's Unicode placeholders, the same way they would inside tmux. In fish panes, `kitten icat shot.png` adds `--unicode-placeholder` for you; elsewhere, pass it yourself. The image scrolls and moves with the pane's text, and it shows in tabs and popups.

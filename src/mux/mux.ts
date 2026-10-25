@@ -10,6 +10,7 @@ import { paneIds, type PaneId } from "./layout.ts";
 import { Pane, type CommandEvent } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
 import { TabServices } from "./services.ts";
+import { Tray, trayWidgets } from "./tray.ts";
 import { MuxView } from "./view.ts";
 import { Workspace, type PaneHost, type PopupSize } from "./workspace.ts";
 
@@ -142,13 +143,23 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     closePopup: (id) => panes.get(id)?.kill(),
     cwd: (id) => panes.get(id)?.cwd(),
     screen: () => ({ cols: renderer.width, rows: renderer.height }),
+    widgetCount: () => tray.widgets.length,
+    openWidget: (index) => openWidget(index),
   };
+
+  const tray = new Tray(trayWidgets(options.config.tray), () => refresh());
 
   const workspace = new Workspace(host, process.cwd(), options.config);
   workspace.message = options.configError;
-  view = new MuxView(renderer, workspace, panes, (id) => {
-    workspace.focusPane(id);
-    refresh();
+  view = new MuxView(renderer, workspace, panes, tray, {
+    onFocusPane: (id) => {
+      workspace.focusPane(id);
+      refresh();
+    },
+    onOpenWidget: (index) => {
+      openWidget(index);
+      refresh();
+    },
   });
   view.render();
 
@@ -171,6 +182,18 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     refresh();
     return id;
   };
+
+  function openWidget(index: number): void {
+    const widget = tray.widgets[index];
+    if (!widget) return;
+    if (!widget.open) {
+      workspace.message = `The ${widget.name} widget has nothing to open`;
+      return;
+    }
+    openViewPopup(workspace.tab.focused, widget.open, widget.name, undefined);
+  }
+
+  tray.start();
 
   renderer.on("focused_renderable", (renderable: unknown) => {
     const pane = [...panes.values()].find((candidate) => candidate.owns(renderable));
@@ -198,6 +221,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     if (stopped) return;
     stopped = true;
     clearInterval(titles);
+    tray.stop();
     clearTimeout(popupTimer);
     for (const running of runningCommands.values()) clearTimeout(running.timer);
     renderer.keyInput.off("keypress", onKey);

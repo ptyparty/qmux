@@ -57,6 +57,14 @@ class FakeHost implements PaneHost {
   screen(): { cols: number; rows: number } {
     return { cols: 200, rows: 50 };
   }
+  widgets = 2;
+  openedWidgets: number[] = [];
+  widgetCount(): number {
+    return this.widgets;
+  }
+  openWidget(index: number): void {
+    this.openedWidgets.push(index);
+  }
 }
 
 function key(spec: string): InputKey {
@@ -668,6 +676,25 @@ describe("Workspace", () => {
       expect(workspace.agents.has(2)).toBe(false);
       expect(workspace.commands.has(2)).toBe(false);
     });
+  });
+
+  test("Ctrl+t w picks a tray widget to open", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    press(workspace, "ctrl+t", "w");
+    expect(workspace.mode).toBe("tray");
+    press(workspace, "s", "s", "s", "return");
+    expect(host.openedWidgets).toEqual([1]);
+    expect(workspace.mode).toBe("normal");
+  });
+
+  test("an empty tray cannot be entered", () => {
+    const host = new FakeHost();
+    host.widgets = 0;
+    const workspace = new Workspace(host);
+    press(workspace, "ctrl+t", "w");
+    expect(workspace.mode).toBe("normal");
+    expect(workspace.message).toBe("The tray has no widgets");
   });
 
   test("there is no resize mode", () => {

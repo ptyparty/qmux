@@ -42,6 +42,8 @@ export interface PaneHost {
   replaceWithShell(id: PaneId): void;
   cwd(id: PaneId): string | undefined;
   screen(): { cols: number; rows: number };
+  widgetCount(): number;
+  openWidget(index: number): void;
 }
 
 export type InputKey = Key & { sequence: string };
@@ -58,6 +60,7 @@ export class Workspace {
   quit = false;
   detachRequested = false;
   clients = 1;
+  selectedWidget = 0;
   readonly paneNames = new Map<PaneId, string>();
   readonly popups: Popup[] = [];
   readonly agents = new Map<PaneId, AgentState>();
@@ -357,6 +360,11 @@ export class Workspace {
   private run(command: Command): void {
     switch (command.type) {
       case "mode":
+        if (command.mode === "tray" && this.host.widgetCount() === 0) {
+          this.message = "The tray has no widgets";
+          this.mode = "normal";
+          return;
+        }
         this.mode = command.mode;
         return;
       case "focus": {
@@ -416,6 +424,12 @@ export class Workspace {
         else this.message = "No previous tab";
         return;
       }
+      case "select-widget":
+        this.selectedWidget = wrap(this.selectedWidget + command.delta, this.host.widgetCount());
+        return;
+      case "open-widget":
+        if (this.selectedWidget < this.host.widgetCount()) this.host.openWidget(this.selectedWidget);
+        return;
       case "close-popup":
         if (this.popup) this.host.closePopup(this.popup.id);
         else this.message = "No popup is open";

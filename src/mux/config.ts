@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { leaf, type LayoutNode, type PaneId } from "./layout.ts";
 import { expandHome, type Project } from "./projects.ts";
+import { defaultTray, trayEntry } from "./tray.ts";
 
 export type PaneSpec = { command?: string[]; name?: string; focus?: boolean };
 export type SplitSpec = { row: LayoutSpec[] } | { column: LayoutSpec[] };
@@ -52,6 +53,7 @@ export const configSchema = z
       .record(z.string(), z.object({ layout: z.string(), cwd: z.string().optional().describe("Working directory; defaults to defaultCwd") }).strict())
       .default({})
       .describe("Named tabs, opened from Ctrl+t o or qmux project like projects"),
+    tray: z.array(trayEntry).default(defaultTray).describe("Widgets on the right of the mode bar, such as { widget: \"clock\" }, { widget: \"system\" }, or { command: [...] }"),
     startup: z.array(z.string()).default([]).describe("Named tabs a new session opens instead of a plain tab"),
     projects: z
       .object({

@@ -12,5 +12,6 @@ export const theme = {
     pane: "#7aa89f",
     tab: "#c4a7e7",
     session: "#e6c384",
+    tray: "#7fb4ca",
   },
 } as const;

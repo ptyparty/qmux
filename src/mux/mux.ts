@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { runtimeDir } from "../private-dir.ts";
 import type { Config } from "./config.ts";
 import type { ControlRequest, ControlResponse } from "./control.ts";
+import type { GraphicsRelay } from "./graphics.ts";
 import { findProjects } from "./projects.ts";
 import { paneIds, type PaneId } from "./layout.ts";
 import { Pane, type CommandEvent } from "./pane.ts";
@@ -21,6 +22,7 @@ export type MuxOptions = {
   controlSocket: string;
   config: Config;
   configError?: string;
+  graphics: GraphicsRelay;
   onDetach: () => void;
   onQuit: () => void;
 };
@@ -35,6 +37,7 @@ export type Mux = {
 export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   const scheduler = new ReadScheduler(readBudgetMs, readWindowMs);
   const panes = new Map<PaneId, Pane>();
+  const graphics = options.graphics;
   const paneEnv = { ...options.config.env, QMUX_SOCKET: options.controlSocket, QMUX_SESSION: options.session };
   const services = new TabServices(join(runtimeDir(), "sessions", options.session, "tabs"), () => ({ ...process.env, ...paneEnv }), (tabId, service, detail) => {
     workspace.serviceFailed(tabId, service, detail);
@@ -42,6 +45,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   });
   let view: MuxView | undefined;
   let stopped = false;
+  let pixelSize = "";
 
   let popupTimer: Timer | undefined;
   const runningCommands = new Map<PaneId, { started: number; timer: Timer }>();
@@ -83,22 +87,38 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       options.onDetach();
     }
     view?.render();
+    syncPixelSize();
     const wait = workspace.popupWaitMs();
     clearTimeout(popupTimer);
     if (wait !== undefined) popupTimer = setTimeout(refresh, wait + 20);
   };
 
+  const syncPixelSize = () => {
+    const size = JSON.stringify([renderer.resolution, renderer.width, renderer.height]);
+    if (size === pixelSize) return;
+    pixelSize = size;
+    for (const pane of panes.values()) pane.syncSize();
+  };
+
+  const destroyPane = (id: PaneId) => {
+    panes.get(id)?.destroy();
+    panes.delete(id);
+    graphics.forgetPane(id);
+  };
+
   type SpawnOptions = { holdOnExit?: boolean; holdOnFailure?: boolean; frameless?: boolean; tabId?: number };
   const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, options: SpawnOptions = {}) => {
     const { holdOnExit, holdOnFailure, frameless, tabId } = options;
-    const env = tabId === undefined ? paneEnv : { ...paneEnv, QMUX_TAB_DIR: services.tabDir(tabId) };
+    const env: Record<string, string> = { ...paneEnv };
+    if (renderer.capabilities?.kitty_graphics) env.QMUX_KITTY_GRAPHICS = "1";
+    if (tabId !== undefined) env.QMUX_TAB_DIR = services.tabDir(tabId);
     panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless }, scheduler, {
       onHeld: () => refresh(),
       onCommand: frameless || holdOnFailure ? undefined : commandEvent,
       onClipboard: (_, text) => copyToClipboard(text),
+      onGraphics: (paneId, command) => graphics.forward(paneId, command),
       onExit: (exited) => {
-        panes.get(exited)?.destroy();
-        panes.delete(exited);
+        destroyPane(exited);
         onExit(exited);
         refresh();
       },
@@ -117,10 +137,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     rerun: (id) => panes.get(id)?.rerun(),
     replaceWithShell: (id) => panes.get(id)?.replaceWithShell(),
     projects: () => findProjects(options.config.projects.roots),
-    destroy: (id) => {
-      panes.get(id)?.destroy();
-      panes.delete(id);
-    },
+    destroy: destroyPane,
     closePopup: (id) => panes.get(id)?.kill(),
     cwd: (id) => panes.get(id)?.cwd(),
     screen: () => ({ cols: renderer.width, rows: renderer.height }),
@@ -183,8 +200,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     clearTimeout(popupTimer);
     for (const running of runningCommands.values()) clearTimeout(running.timer);
     renderer.keyInput.off("keypress", onKey);
-    for (const pane of panes.values()) pane.destroy();
-    panes.clear();
+    for (const id of [...panes.keys()]) destroyPane(id);
     void services.stopAll();
   }
 

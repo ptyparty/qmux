@@ -75,6 +75,15 @@ export default {
 
 From inside a pane, `qmux pane open [--right|--below|--tab] [--name NAME] [--no-focus] -- COMMAND...` opens a pane beside it in the same tab and prints the new pane's id. With `--popup` (and optionally `--width`/`--height` in percent), the command opens over the tab at once and takes the keys. The popup closes when the command exits successfully. After a failure it stays up until the next key, so the error can be read.
 
+## Images
+
+When the terminal qmux is attached to supports kitty graphics, programs in panes can show images using kitty's Unicode placeholders, the same way they would inside tmux. In fish panes, `kitten icat shot.png` adds `--unicode-placeholder` for you; elsewhere, pass it yourself. The image scrolls and moves with the pane's text, and it shows in tabs and popups.
+
+- **Other placements:** images placed at the cursor in the classic way (`kitten icat` without `--unicode-placeholder`) are not shown.
+- **Extra terminals:** a terminal that attaches later is sent the images panes have shown. Images from a pane are deleted when it closes.
+- **Pixel size:** panes report their size in pixels, so programs can size images to fit.
+- **Forms:** an `image` element shows a picture in an ask. On a terminal without kitty graphics, the form shows the image's caption and path instead. Panes get `QMUX_KITTY_GRAPHICS=1` when the attached terminal supports kitty graphics.
+
 ## Claude Code hooks
 
 `qmux hook` lets Claude Code sessions running in qmux panes report what they are doing. Point these hook events at it in `~/.claude/settings.json`: `UserPromptSubmit`, `Stop`, `SessionEnd`, `Notification` (matcher `*`) and `PermissionRequest` (matcher `*`, with a long timeout such as 3600 seconds). Use absolute paths, since hooks may not have `~/.bun/bin` on their PATH:

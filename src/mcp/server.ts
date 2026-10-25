@@ -11,7 +11,7 @@ const defaultWaitSeconds = 50;
 
 const askDescription = `Ask the user questions in a form that pops up in their terminal (a popup in qmux, a floating pane in zellij, or a popup in tmux), and get their answers back as JSON.
 
-Use it when you need a decision, a choice between options, or several answers at once. It is quicker for the user than typing replies in chat. Element types: text, confirm (yes/no), choice (single or multi, with an automatic "Other" free-text option), number (bounded), note (display-only text), and markdown (display-only, rendered markdown for longer content). Use \`when\` to show an element only when an earlier answer calls for it.
+Use it when you need a decision, a choice between options, or several answers at once. It is quicker for the user than typing replies in chat. Element types: text, confirm (yes/no), choice (single or multi, with an automatic "Other" free-text option), number (bounded), note (display-only text), markdown (display-only, rendered markdown for longer content), and image (display-only, a picture such as a screenshot shown from a file path). Use \`when\` to show an element only when an earlier answer calls for it.
 
 The result is {"status":"submitted","values":{...}} with one entry per visible element, {"status":"cancelled"} if the user dismissed the form, or {"status":"pending"} if they have not answered within wait_seconds. When it is pending, call the wait tool with the returned id.`;
 

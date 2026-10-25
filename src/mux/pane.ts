@@ -2,6 +2,7 @@ import { BoxRenderable, EmbeddedTerminalRenderable, type CliRenderer, type Mouse
 import { readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename } from "node:path";
+import { GraphicsScanner, type GraphicsCommand } from "./graphics.ts";
 import type { PaneId } from "./layout.ts";
 import { Pty, type ReadScheduler } from "./pty.ts";
 import { theme } from "./theme.ts";
@@ -15,6 +16,7 @@ export type PaneEvents = {
   onClick: (id: PaneId) => void;
   onCommand?: (id: PaneId, event: CommandEvent) => void;
   onClipboard?: (id: PaneId, text: string) => void;
+  onGraphics?: (id: PaneId, command: GraphicsCommand) => void;
 };
 
 export type PaneOptions = {
@@ -45,6 +47,7 @@ export class Pane {
   private command: string[] | undefined;
   private markTail = "";
   private readonly clipboard = new ClipboardScanner();
+  private readonly graphics = new GraphicsScanner();
   private lastClick = { at: 0, x: -1, y: -1 };
 
   constructor(
@@ -62,7 +65,7 @@ export class Pane {
       onData: (data) => this.pty.write(data),
       onTerminalResize: (cols, rows) => {
         this.size = { cols, rows };
-        this.pty.resize(cols, rows);
+        this.syncSize();
       },
     });
     const border = options.frameless ? {} : { border: true, borderStyle: "rounded" as const, borderColor: theme.border, titleColor: theme.muted };
@@ -76,6 +79,7 @@ export class Pane {
     });
     this.frame.add(this.view);
     this.pty = this.start(options.command);
+    this.syncSize();
   }
 
   owns(renderable: unknown): boolean {
@@ -114,6 +118,15 @@ export class Pane {
     }
   }
 
+  syncSize(): void {
+    const { cols, rows } = this.size;
+    const resolution = this.renderer.resolution;
+    if (!resolution || this.renderer.width === 0 || this.renderer.height === 0) return this.pty.resize(cols, rows);
+    const cellWidth = resolution.width / this.renderer.width;
+    const cellHeight = resolution.height / this.renderer.height;
+    this.pty.resize(cols, rows, Math.round(cols * cellWidth), Math.round(rows * cellHeight));
+  }
+
   rerun(): void {
     this.restartWith(this.options.command);
   }
@@ -135,6 +148,7 @@ export class Pane {
     this.exitCode = undefined;
     this.view.write(resetTerminal);
     this.pty = this.start(command);
+    this.syncSize();
   }
 
   private start(command: string[] | undefined): Pty {
@@ -149,6 +163,7 @@ export class Pane {
         this.view.write(data);
         if (this.events.onCommand) this.scanCommandMarks(data);
         for (const text of this.clipboard.scan(data)) this.events.onClipboard?.(this.id, text);
+        if (this.events.onGraphics) for (const command of this.graphics.scan(data)) this.events.onGraphics(this.id, command);
       },
       onExit: () => this.childExited(pty, command !== undefined),
       env: { ...paneEnvironment(this.id), ...this.options.env },

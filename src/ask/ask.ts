@@ -1,4 +1,4 @@
-import type { FormSpec } from "../form/schema.ts";
+import { resolveImagePaths, type FormSpec } from "../form/schema.ts";
 import { launchForm, resolveHost, type HostName, type Launch } from "./hosts.ts";
 import type { AskOwner, AskStatus, AskStore } from "./store.ts";
 
@@ -8,7 +8,7 @@ export type AskOutcome = { id: string; launch: Launch; status: AskStatus };
 
 export async function ask(store: AskStore, spec: FormSpec, host: HostName, waitMs: number): Promise<AskOutcome> {
   const resolved = resolveHost(host);
-  const meta = await store.create(spec, resolved, askOwner(process.env));
+  const meta = await store.create(resolveImagePaths(spec, process.cwd()), resolved, askOwner(process.env));
   let launch: Launch;
   try {
     launch = await launchForm(resolved, meta.id, spec.title, store.root);

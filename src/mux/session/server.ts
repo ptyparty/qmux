@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import { serveControl } from "../control.ts";
 import { loadConfig } from "../config.ts";
+import { GraphicsRelay } from "../graphics.ts";
 import { createMux, type Mux } from "../mux.ts";
 import { encodeFrame, FrameDecoder, type Frame, type Goodbye, type Hello, type Size } from "./protocol.ts";
 import { tryLock } from "./lock.ts";
@@ -41,6 +42,9 @@ export async function runServer(name: string): Promise<void> {
   const output = new RelayOutput((socket, bytes) => send(socket, { type: "output", body: bytes }));
   const input = new Readable({ read() {} });
   const clients = new Set<ClientSocket>();
+  const graphics = new GraphicsRelay((bytes) => {
+    for (const client of clients) send(client, { type: "output", body: bytes });
+  });
   let renderer: CliRenderer | undefined;
   let mux: Mux | undefined;
   let lastTyped: ClientSocket | undefined;
@@ -86,7 +90,7 @@ export async function runServer(name: string): Promise<void> {
         stdout: output as unknown as NodeJS.WriteStream,
         width: hello.cols,
         height: hello.rows,
-        environment: hello.env,
+        environment: { ...hello.env, OPENTUI_FORCE_EXPLICIT_WIDTH: "0" },
         exitOnCtrlC: false,
         exitSignals: [],
         targetFps: 120,
@@ -100,6 +104,7 @@ export async function runServer(name: string): Promise<void> {
         controlSocket: paths.control,
         config,
         configError: error && "Could not load the qmux config; see the session log",
+        graphics,
         onDetach: () => serialize(() => release(lastTyped, { reason: "detached", message: `Detached from session ${name}` })),
         onQuit: () => serialize(quit),
       });
@@ -108,7 +113,10 @@ export async function runServer(name: string): Promise<void> {
     }
     output.targets = new Set();
     await renderer.suspend();
-    if (!socket.data.closed) clients.add(socket);
+    if (!socket.data.closed) {
+      clients.add(socket);
+      for (const bytes of graphics.replay()) send(socket, { type: "output", body: bytes });
+    }
     output.targets = new Set(clients);
     if (clients.size > 0) await renderer.resume();
     clientsChanged();

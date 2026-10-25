@@ -17,7 +17,8 @@ import {
 import { styled, type Part } from "../ui/styled.ts";
 import { FormController, type FormResult, type Focusable } from "./controller.ts";
 import { isEditing, keyHints, keyToAction, type EditorPosition } from "./keys.ts";
-import type { ChoiceElement, ConfirmElement, Element, NumberElement, TextElement } from "./schema.ts";
+import { fitImage, imageIdColor, newImageId, placeholderLines, readImage, terminalImageOutput, uploadCommands, type ImageOutput } from "./image.ts";
+import type { ChoiceElement, ConfirmElement, Element, ImageElement, NumberElement, TextElement } from "./schema.ts";
 
 const palette = {
   accent: "#7e9cd8",
@@ -36,9 +37,9 @@ interface ElementView {
   editorFor(focusable: Focusable): Editor | undefined;
 }
 
-export function runForm(renderer: CliRenderer, controller: FormController): Promise<FormResult> {
+export function runForm(renderer: CliRenderer, controller: FormController, images: ImageOutput = terminalImageOutput()): Promise<FormResult> {
   return new Promise((resolve) => {
-    const view = new FormView(renderer, controller, resolve);
+    const view = new FormView(renderer, controller, images, resolve);
     view.sync();
   });
 }
@@ -52,6 +53,7 @@ class FormView {
   constructor(
     private readonly renderer: CliRenderer,
     private readonly controller: FormController,
+    private readonly images: ImageOutput,
     private readonly resolve: (result: FormResult) => void,
   ) {
     const frame = new BoxRenderable(renderer, {
@@ -169,6 +171,8 @@ class FormView {
         return new NoteView(this.renderer, element.text);
       case "markdown":
         return new MarkdownView(this.renderer, element.text);
+      case "image":
+        return new ImageView(this.renderer, element, this.images);
       case "text":
         return new TextView(this.renderer, this.controller, element, this.changed);
       case "confirm":
@@ -231,6 +235,47 @@ class MarkdownView implements ElementView {
   constructor(renderer: CliRenderer, text: string) {
     this.root = new BoxRenderable(renderer, { flexDirection: "column" });
     this.root.add(new MarkdownRenderable(renderer, { content: text, syntaxStyle: markdownStyle(renderer), tableOptions: { widthMode: "content", cellPaddingX: 1 } }));
+  }
+
+  sync(): void {}
+
+  flush(): void {}
+
+  editorFor(): undefined {
+    return undefined;
+  }
+}
+
+const imageMargin = { cols: 5, rows: 8 };
+
+class ImageView implements ElementView {
+  readonly root: BoxRenderable;
+
+  constructor(renderer: CliRenderer, element: ImageElement, images: ImageOutput) {
+    this.root = new BoxRenderable(renderer, { flexDirection: "column" });
+    const caption = element.caption ? fg(palette.muted)(element.caption) : undefined;
+    const handled = images.enabled && this.showImage(renderer, element, images);
+    if (handled) {
+      if (caption) this.root.add(new TextRenderable(renderer, { content: styled([caption]) }));
+      return;
+    }
+    const label: Part[] = [fg(palette.muted)("[image] "), ...(caption ? [caption, fg(palette.muted)(" · ")] : []), fg(palette.muted)(element.path)];
+    this.root.add(new TextRenderable(renderer, { content: styled(label) }));
+  }
+
+  private showImage(renderer: CliRenderer, element: ImageElement, images: ImageOutput): boolean {
+    let image;
+    try {
+      image = readImage(element.path);
+    } catch (error) {
+      this.root.add(new TextRenderable(renderer, { content: `Could not show ${element.path}: ${(error as Error).message}`, fg: palette.error }));
+      return true;
+    }
+    const box = fitImage(image.info.width, image.info.height, renderer.width - imageMargin.cols, renderer.height - imageMargin.rows);
+    const id = newImageId();
+    images.write(uploadCommands(id, image, box));
+    this.root.add(new TextRenderable(renderer, { content: placeholderLines(box).join("\n"), fg: imageIdColor(id), wrapMode: "none", height: box.rows, flexShrink: 0 }));
+    return true;
   }
 
   sync(): void {}

@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { z } from "zod";
 import { parseWhen, referencedIds, WhenSyntaxError } from "./when.ts";
 
@@ -72,6 +73,13 @@ export const markdownElement = z.object({
   when,
 });
 
+export const imageElement = z.object({
+  type: z.literal("image"),
+  path: z.string().describe("Image file to show (PNG, JPEG, WebP, or GIF); a relative path is resolved against the asker's working directory"),
+  caption: z.string().optional(),
+  when,
+});
+
 export const element = z.discriminatedUnion("type", [
   textElement,
   confirmElement,
@@ -79,6 +87,7 @@ export const element = z.discriminatedUnion("type", [
   numberElement,
   noteElement,
   markdownElement,
+  imageElement,
 ]);
 
 export const formSpec = z
@@ -92,11 +101,12 @@ export const formSpec = z
 
 export type FormSpec = z.infer<typeof formSpec>;
 export type Element = z.infer<typeof element>;
-export type InputElement = Exclude<Element, { type: "note" | "markdown" }>;
+export type InputElement = Exclude<Element, { type: "note" | "markdown" | "image" }>;
 export type TextElement = z.infer<typeof textElement>;
 export type ConfirmElement = z.infer<typeof confirmElement>;
 export type ChoiceElement = z.infer<typeof choiceElement>;
 export type NumberElement = z.infer<typeof numberElement>;
+export type ImageElement = z.infer<typeof imageElement>;
 export type ChoiceOption = { value: string; label: string; description?: string };
 
 export function parseFormSpec(input: unknown): FormSpec {
@@ -104,7 +114,12 @@ export function parseFormSpec(input: unknown): FormSpec {
 }
 
 export function isInputElement(element: Element): element is InputElement {
-  return element.type !== "note" && element.type !== "markdown";
+  return element.type !== "note" && element.type !== "markdown" && element.type !== "image";
+}
+
+export function resolveImagePaths(spec: FormSpec, cwd: string): FormSpec {
+  const elements = spec.elements.map((element) => (element.type === "image" ? { ...element, path: resolve(cwd, element.path) } : element));
+  return { ...spec, elements };
 }
 
 export function choiceOptions(element: ChoiceElement): ChoiceOption[] {

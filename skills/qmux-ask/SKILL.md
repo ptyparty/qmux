@@ -53,6 +53,7 @@ Element types and their answer values:
 | `number` | number | `min`, `max`, `step`, `default` |
 | `note` | none | `text` |
 | `markdown` | none | `text`, rendered with headings, lists, emphasis, code blocks, and tables |
+| `image` | none | `path` (PNG, JPEG, WebP, or GIF; relative paths resolve against your working directory), `caption` |
 
 A choice gets an "Other…" free-text option unless `"other": false`. When the user picks it, the typed text is returned as the answer. Pass `"other": false` when only the listed options make sense.
 
@@ -68,5 +69,6 @@ A choice gets an "Other…" free-text option unless `"other": false`. When the u
 
 - Put the default you recommend in `default`, and say why in its option's `description` or a `note`.
 - Use a `markdown` element for anything longer than a sentence or two, such as a summary, a diff explanation, or a plan to approve. Forms that overflow scroll with PgUp/PgDn.
+- Use an `image` element to show a screenshot or diagram the question is about. Terminals that can't draw it show the caption and path instead, so make the caption say what the image shows.
 - Keep a form to one screen, about six elements. Split unrelated decisions into separate asks.
 - Labels are questions the user can answer without scrolling back through chat. Include the specifics (names, numbers) in the label or description.

@@ -219,8 +219,8 @@ export class Pty {
     }
   }
 
-  resize(cols: number, rows: number): void {
-    const size = new Uint16Array([rows, cols, 0, 0]);
+  resize(cols: number, rows: number, width = 0, height = 0): void {
+    const size = new Uint16Array([rows, cols, width, height]);
     libc.symbols.ioctl(this.master, TIOCSWINSZ, ptr(size));
   }
 

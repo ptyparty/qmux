@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing";
 import { FormController, type FormResult } from "./controller.ts";
+import { type ImageOutput } from "./image.ts";
+import { tinyPng } from "./test-images.ts";
 import { parseFormSpec } from "./schema.ts";
 import { runForm } from "./view.ts";
 
@@ -11,10 +13,10 @@ afterEach(async () => {
   setup = undefined;
 });
 
-async function open(elements: unknown[]): Promise<{ setup: TestRendererSetup; result: Promise<FormResult> }> {
+async function open(elements: unknown[], images: ImageOutput = { enabled: false, write: () => {} }): Promise<{ setup: TestRendererSetup; result: Promise<FormResult> }> {
   setup = await createTestRenderer({ width: 60, height: 24 });
   const controller = new FormController(parseFormSpec({ title: "Deploy", description: "Ship it?", elements }));
-  const result = runForm(setup.renderer, controller);
+  const result = runForm(setup.renderer, controller, images);
   await setup.renderOnce();
   return { setup, result };
 }
@@ -163,5 +165,28 @@ describe("form view", () => {
     const { setup, result } = await open([{ type: "text", id: "name", label: "Name" }]);
     setup.mockInput.pressEscape();
     expect(await result).toEqual({ status: "cancelled" });
+  });
+
+  test("shows an image's caption and path when the terminal cannot draw it", async () => {
+    const { setup } = await open([{ type: "image", path: "/tmp/shot.png", caption: "The broken page" }]);
+    expect(await renderedWith(setup, "[image]")).toContain("[image] The broken page · /tmp/shot.png");
+  });
+
+  test("uploads an image and fills its box with placeholders", async () => {
+    const path = `${process.env.TMPDIR ?? "/tmp"}/qmux-view-test-${process.pid}.png`;
+    await Bun.write(path, tinyPng(40, 20));
+    const written: string[] = [];
+    const { setup } = await open([{ type: "image", path, caption: "Tiny" }], { enabled: true, write: (commands) => written.push(...commands) });
+    const frame = await renderedWith(setup, "Tiny");
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatch(/^\x1b_Ga=T,U=1,i=\d+,c=4,r=1,f=100,q=2,m=0;/);
+    expect(frame).toContain("\u{10EEEE}");
+  });
+
+  test("says when an image cannot be read", async () => {
+    const { setup } = await open([{ type: "image", path: "/nonexistent/shot.png" }], { enabled: true, write: () => {} });
+    const frame = await renderedWith(setup, "Could not show");
+    expect(frame).toContain("Could not show /nonexistent/shot.png");
+    expect(frame).not.toContain("[image]");
   });
 });

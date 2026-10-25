@@ -44,6 +44,7 @@ describe("AskStore", () => {
   test("results the asking pane has not seen are handed over once", async () => {
     const owner = { socket: "/run/qmux.sock", paneId: 3 };
     const answered = await store.create(spec, "qmux", owner);
+    await Bun.sleep(2);
     const dismissed = await store.create(spec, "qmux", owner);
     const waitedOn = await store.create(spec, "qmux", owner);
     const open = await store.create(spec, "qmux", owner);
@@ -58,6 +59,22 @@ describe("AskStore", () => {
     ]);
     expect(await store.claimUnseen(owner)).toEqual([]);
     expect(await store.status(open.id)).toEqual({ status: "pending" });
+  });
+
+  test("results from an earlier run of the session stay with it", async () => {
+    const before = await store.create(spec, "qmux", { socket: "/run/qmux.sock", paneId: 3, server: "first" });
+    await store.complete(before.id, { status: "submitted", values: {} });
+    expect(await store.claimUnseen({ socket: "/run/qmux.sock", paneId: 3, server: "second" })).toEqual([]);
+  });
+
+  test("skips asks it cannot read", async () => {
+    const owner = { socket: "/run/qmux.sock", paneId: 3 };
+    const broken = await store.create(spec, "qmux", owner);
+    const fine = await store.create(spec, "qmux", owner);
+    await Bun.write(join(root, broken.id, "meta.json"), "{");
+    await store.complete(fine.id, { status: "cancelled" });
+    expect((await store.claimUnseen(owner)).map(({ meta }) => meta.id)).toEqual([fine.id]);
+    expect((await store.pending()).map((meta) => meta.id)).toEqual([]);
   });
 
   test("wait gives up after the timeout", async () => {

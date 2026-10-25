@@ -10,7 +10,9 @@ export function attachedPaneEnv(sessionId: unknown, procDir = "/proc"): Record<s
     const argv = readNulSeparated(join(procDir, entry, "cmdline"));
     if (!argv || !attachesTo(argv, sessionId)) continue;
     const env = Object.fromEntries((readNulSeparated(join(procDir, entry, "environ")) ?? []).map(splitVariable));
-    if (env.QMUX_SOCKET && env.QMUX_PANE_ID) return { QMUX_SOCKET: env.QMUX_SOCKET, QMUX_PANE_ID: env.QMUX_PANE_ID };
+    if (env.QMUX_SOCKET && env.QMUX_PANE_ID) {
+      return { QMUX_SOCKET: env.QMUX_SOCKET, QMUX_PANE_ID: env.QMUX_PANE_ID, ...(env.QMUX_SERVER_ID && { QMUX_SERVER_ID: env.QMUX_SERVER_ID }) };
+    }
   }
   return undefined;
 }

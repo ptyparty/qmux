@@ -1,5 +1,5 @@
-import { ask } from "../ask/ask.ts";
-import { AskStore, type AskStatus, type UnseenResult } from "../ask/store.ts";
+import { ask, askOwner } from "../ask/ask.ts";
+import { AskStore, type AskOwner, type AskStatus, type UnseenResult } from "../ask/store.ts";
 import type { FormSpec } from "../form/schema.ts";
 import { ControlError, sendControl, type ControlRequest } from "../mux/control.ts";
 import { attachedPaneEnv } from "./attached.ts";
@@ -8,14 +8,6 @@ export type HookInput = { hook_event_name?: string; message?: string; notificati
 
 type AgentStateRequest = Extract<ControlRequest, { method: "agent.state" }>;
 type AgentStateName = AgentStateRequest["params"]["state"];
-
-export type QmuxPane = { socket: string; paneId: number };
-
-export function qmuxPane(env: Record<string, string | undefined>): QmuxPane | undefined {
-  const paneId = Number(env.QMUX_PANE_ID);
-  if (!env.QMUX_SOCKET || !Number.isInteger(paneId)) return undefined;
-  return { socket: env.QMUX_SOCKET, paneId };
-}
 
 export function stateForEvent(input: HookInput): { state: AgentStateName; detail?: string } | undefined {
   switch (input.hook_event_name) {
@@ -95,7 +87,7 @@ export function permissionDecision(input: PermissionInput, answer: PermissionAns
   }
 }
 
-export async function askPermission(pane: QmuxPane, input: PermissionInput): Promise<object | undefined> {
+export async function askPermission(pane: AskOwner, input: PermissionInput): Promise<object | undefined> {
   const values = submitted(await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`));
   return values && permissionDecision(input, values);
 }
@@ -149,7 +141,7 @@ export function planDecision(toolInput: PlanInput["tool_input"], answer: PlanAns
   }
 }
 
-export async function askPlan(pane: QmuxPane, input: PlanInput): Promise<object | undefined> {
+export async function askPlan(pane: AskOwner, input: PlanInput): Promise<object | undefined> {
   const plan = input.tool_input.plan;
   if (typeof plan !== "string" || !plan.trim()) return undefined;
   const status = await askInPopup(pane, planForm(plan), "Claude has a plan for you to review");
@@ -190,7 +182,7 @@ export function questionAnswers(questions: ClaudeQuestion[], values: Record<stri
   return answers;
 }
 
-export async function askQuestions(pane: QmuxPane, input: QuestionInput): Promise<object | undefined> {
+export async function askQuestions(pane: AskOwner, input: QuestionInput): Promise<object | undefined> {
   const questions = input.tool_input.questions ?? [];
   if (questions.length === 0) return undefined;
   const values = submitted(await askInPopup(pane, questionForm(questions), "Claude has a question"));
@@ -204,11 +196,11 @@ export async function askQuestions(pane: QmuxPane, input: QuestionInput): Promis
   };
 }
 
-async function askInPopup(pane: QmuxPane, spec: FormSpec, waitingFor: string): Promise<AskStatus | undefined> {
+async function askInPopup(pane: AskOwner, spec: FormSpec, waitingFor: string): Promise<AskStatus | undefined> {
   await reportState(pane, "waiting", waitingFor);
   let outcome;
   try {
-    outcome = await ask(new AskStore(), spec, "qmux", Number.POSITIVE_INFINITY);
+    outcome = await ask(new AskStore(), spec, "qmux", Number.POSITIVE_INFINITY, {});
   } catch {
     return undefined;
   }
@@ -232,10 +224,10 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
   } catch {
     return undefined;
   }
-  let pane = qmuxPane(env);
+  let pane = askOwner(env);
   if (!pane) {
     const attached = attachedPaneEnv(input.session_id, procDir);
-    pane = attached && qmuxPane(attached);
+    pane = attached && askOwner(attached);
     if (!pane) return undefined;
     Object.assign(process.env, attached);
   }
@@ -282,7 +274,7 @@ function describeSuggestion(suggestion: PermissionSuggestion): string {
   return `${rules.join(", ") || suggestion.type}${where}`;
 }
 
-export async function reportState(pane: QmuxPane, state: AgentStateName, detail?: string): Promise<void> {
+export async function reportState(pane: AskOwner, state: AgentStateName, detail?: string): Promise<void> {
   try {
     await sendControl(pane.socket, { method: "agent.state", params: { paneId: pane.paneId, state, detail } }, 1000);
   } catch (error) {

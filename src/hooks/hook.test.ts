@@ -131,12 +131,14 @@ describe("qmux hook", () => {
   test("reports state changes and answers permission requests through a popup", async () => {
     const socket = join(dir, "control.sock");
     const requests: ControlRequest[] = [];
+    const owners: unknown[] = [];
     const server = serveControl(socket, async (request) => {
       requests.push(request);
       if (request.method === "popup.open") {
         const command = request.params.command;
         const askId = command[command.indexOf("--ask") + 1]!;
         const store = new AskStore(command[command.indexOf("--asks-dir") + 1]!);
+        owners.push((await store.meta(askId)).owner);
         setTimeout(() => store.complete(askId, { status: "submitted", values: { decision: "deny", reason: "not now" } }), 20);
       }
       return { ok: true };
@@ -159,5 +161,6 @@ describe("qmux hook", () => {
     expect(requests.map((request) => request.method)).toEqual(["agent.state", "agent.state", "popup.open", "agent.state"]);
     expect(requests[0]).toEqual({ method: "agent.state", params: { paneId: 7, state: "working" } });
     expect(requests[2]).toMatchObject({ params: { title: "Allow Bash?", paneId: 7 } });
+    expect(owners).toEqual([undefined]);
   });
 });

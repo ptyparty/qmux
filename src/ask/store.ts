@@ -7,7 +7,7 @@ import { parseFormSpec, type FormSpec } from "../form/schema.ts";
 
 export type AskStatus = FormResult | { status: "pending" };
 
-export type AskOwner = { socket: string; paneId: number };
+export type AskOwner = { socket: string; paneId: number; server?: string };
 
 export type AskMeta = { id: string; title: string; createdAt: string; host: string; owner?: AskOwner };
 
@@ -87,20 +87,30 @@ export class AskStore {
   }
 
   async pending(): Promise<AskMeta[]> {
-    const metas = await Promise.all(this.ids().map((id) => this.meta(id)));
-    const statuses = await Promise.all(metas.map((meta) => this.status(meta.id)));
-    return metas.filter((_, index) => statuses[index]?.status === "pending");
+    const asks = await this.existing();
+    return asks.filter((entry) => entry.status.status === "pending").map((entry) => entry.meta);
   }
 
   async claimUnseen(owner: AskOwner): Promise<UnseenResult[]> {
-    const metas = await Promise.all(this.ids().map((id) => this.meta(id)));
     const unseen: UnseenResult[] = [];
-    for (const meta of metas) {
-      if (meta.owner?.socket !== owner.socket || meta.owner.paneId !== owner.paneId) continue;
-      const status = await this.status(meta.id);
+    for (const { meta, status } of await this.existing((meta) => sameOwner(meta.owner, owner))) {
       if (status.status !== "pending" && this.claim(meta.id)) unseen.push({ meta, result: status });
     }
     return unseen.sort((a, b) => a.meta.createdAt.localeCompare(b.meta.createdAt));
+  }
+
+  private async existing(wanted: (meta: AskMeta) => boolean = () => true): Promise<{ meta: AskMeta; status: AskStatus }[]> {
+    const found = await Promise.all(
+      this.ids().map(async (id) => {
+        try {
+          const meta = await this.meta(id);
+          return wanted(meta) ? { meta, status: await this.status(id) } : undefined;
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    return found.filter((entry) => entry !== undefined);
   }
 
   private claim(id: string): boolean {
@@ -108,7 +118,8 @@ export class AskStore {
       closeSync(openSync(join(this.dir(id), "seen"), "wx"));
       return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST" || code === "ENOENT") return false;
       throw error;
     }
   }
@@ -132,4 +143,8 @@ export class AskStore {
   private dir(id: string): string {
     return join(this.root, id);
   }
+}
+
+function sameOwner(a: AskOwner | undefined, b: AskOwner): boolean {
+  return a !== undefined && a.socket === b.socket && a.paneId === b.paneId && a.server === b.server;
 }

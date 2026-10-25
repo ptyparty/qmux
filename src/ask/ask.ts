@@ -6,9 +6,11 @@ export class AlreadyAnsweredError extends Error {}
 
 export type AskOutcome = { id: string; launch: Launch; status: AskStatus };
 
-export async function ask(store: AskStore, spec: FormSpec, host: HostName, waitMs: number): Promise<AskOutcome> {
+export type AskOptions = { owner?: AskOwner };
+
+export async function ask(store: AskStore, spec: FormSpec, host: HostName, waitMs: number, options: AskOptions = { owner: askOwner(process.env) }): Promise<AskOutcome> {
   const resolved = resolveHost(host);
-  const meta = await store.create(resolveImagePaths(spec, process.cwd()), resolved, askOwner(process.env));
+  const meta = await store.create(resolveImagePaths(spec, process.cwd()), resolved, options.owner);
   let launch: Launch;
   try {
     launch = await launchForm(resolved, meta.id, spec.title, store.root);
@@ -22,7 +24,7 @@ export async function ask(store: AskStore, spec: FormSpec, host: HostName, waitM
 export function askOwner(env: Record<string, string | undefined>): AskOwner | undefined {
   const paneId = Number(env.QMUX_PANE_ID);
   if (!env.QMUX_SOCKET || !env.QMUX_PANE_ID || !Number.isInteger(paneId)) return undefined;
-  return { socket: env.QMUX_SOCKET, paneId };
+  return { socket: env.QMUX_SOCKET, paneId, ...(env.QMUX_SERVER_ID && { server: env.QMUX_SERVER_ID }) };
 }
 
 export async function reopen(store: AskStore, id: string, host: HostName): Promise<Launch> {

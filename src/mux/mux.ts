@@ -1,4 +1,5 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { runtimeDir } from "../private-dir.ts";
 import type { Config } from "./config.ts";
@@ -38,7 +39,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   const scheduler = new ReadScheduler(readBudgetMs, readWindowMs);
   const panes = new Map<PaneId, Pane>();
   const graphics = options.graphics;
-  const paneEnv = { ...options.config.env, QMUX_SOCKET: options.controlSocket, QMUX_SESSION: options.session };
+  const paneEnv = { ...options.config.env, QMUX_SOCKET: options.controlSocket, QMUX_SESSION: options.session, QMUX_SERVER_ID: randomBytes(8).toString("hex") };
   const services = new TabServices(join(runtimeDir(), "sessions", options.session, "tabs"), () => ({ ...process.env, ...paneEnv }), (tabId, service, detail) => {
     workspace.serviceFailed(tabId, service, detail);
     refresh();

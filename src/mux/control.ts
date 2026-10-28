@@ -23,6 +23,11 @@ export const controlRequest = z.discriminatedUnion("method", [
       height: z.number().min(10).max(100).optional().describe("Popup height, percent of the screen"),
     }),
   }),
+  z.object({
+    method: z.literal("job.run"),
+    params: z.object({ command: z.array(z.string()).min(1), near: z.number().int(), name: z.string().optional() }),
+  }),
+  z.object({ method: z.literal("job.status"), params: z.object({ jobId: z.number().int() }) }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),
 ]);

@@ -25,6 +25,9 @@ Usage:
   qmux pane open [--right|--below|--tab|--popup] [--name NAME] [--no-focus] [--width PCT] [--height PCT] -- COMMAND...
       From inside a session, open a pane running COMMAND beside this one, or over this tab with --popup.
       A popup closes when COMMAND succeeds; --width and --height size it. Prints the new pane's id.
+  qmux job run [--name NAME] [--wait] -- COMMAND...
+      From inside a session, run COMMAND out of sight as a job in this tab; a toast says when it is done.
+      Prints the job's id. With --wait, print the job's output as it runs and exit with its exit code.
   qmux ask [spec.json|-] [--wait] [--timeout SECONDS] [--host auto|qmux|zellij|tmux|none]
       Open a form for the user and print {"id", "host", "message", "status", ...}.
       With --wait, block until the user answers (or the timeout passes).
@@ -82,6 +85,8 @@ async function main(argv: string[]): Promise<void> {
       return projectCommand(rest);
     case "pane":
       return paneCommand(rest);
+    case "job":
+      return jobCommand(rest);
     case "server":
       return (await import("./mux/session/server.ts")).runServer(requireName(rest));
     case "help":
@@ -219,6 +224,55 @@ async function paneCommand(args: string[]): Promise<void> {
   });
   if (!response.ok) throw new SessionError(response.error);
   console.log((response.result as { paneId: number }).paneId);
+}
+
+async function jobCommand(args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== "run") throw new UsageError(`unknown job command ${subcommand ?? ""}`.trim());
+  const { values, positionals } = parse(rest, { name: { type: "string" }, wait: { type: "boolean" } });
+  if (positionals.length === 0) throw new UsageError("missing the command to run as a job");
+  const socket = process.env.QMUX_SOCKET;
+  const near = Number(process.env.QMUX_PANE_ID);
+  if (!socket || !Number.isInteger(near)) throw new UsageError("qmux job run works from inside a qmux pane");
+  const control = async (request: Parameters<typeof sendControl>[1]) => {
+    const response = await sendControl(socket, request).catch((error: Error) => {
+      throw new SessionError(error.message);
+    });
+    if (!response.ok) throw new SessionError(response.error);
+    return response.result;
+  };
+  const { jobId, log } = (await control({ method: "job.run", params: { command: positionals, near, name: values.name } })) as { jobId: number; log: string };
+  if (!values.wait) {
+    console.log(jobId);
+    return;
+  }
+  const output = new JobOutput(log);
+  for (;;) {
+    const status = (await control({ method: "job.status", params: { jobId } })) as { state: string; code: number | null };
+    await output.drain(status.state !== "running");
+    if (status.state !== "running") process.exit(status.code ?? 1);
+    await Bun.sleep(300);
+  }
+}
+
+class JobOutput {
+  private offset = 0;
+  private pending = "";
+  private readonly decoder = new TextDecoder();
+
+  constructor(private readonly path: string) {}
+
+  async drain(final: boolean): Promise<void> {
+    const file = Bun.file(this.path);
+    const bytes = await file.slice(this.offset).bytes();
+    this.offset += bytes.length;
+    const text = this.pending + this.decoder.decode(bytes, { stream: !final });
+    const end = final ? text.length : text.lastIndexOf("\n") + 1;
+    this.pending = text.slice(end);
+    const lines = Bun.stripANSI(text.slice(0, end)).replace(/\r\n/g, "\n").split("\n").map((line) => line.slice(line.lastIndexOf("\r") + 1));
+    const printable = lines.join("\n");
+    if (printable !== "") process.stdout.write(final && !printable.endsWith("\n") ? `${printable}\n` : printable);
+  }
 }
 
 function percent(value: string | undefined, flag: string): number | undefined {

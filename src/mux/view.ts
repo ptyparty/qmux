@@ -1,6 +1,7 @@
 import { BoxRenderable, TextRenderable, bg, bold, fg, type CliRenderer, type StyledText } from "@opentui/core";
 import { styled, type Part } from "../ui/styled.ts";
 import { hints, modeHints, type Hint, type Mode } from "./keymap.ts";
+import { JobsPanel, jobBadge, jobDetail } from "./jobs-panel.ts";
 import { Launcher } from "./launcher.ts";
 import { paneIds, shownPaneTab, type LayoutNode, type PaneId, type TabsNode } from "./layout.ts";
 import type { Pane } from "./pane.ts";
@@ -19,6 +20,10 @@ export class MuxView {
   private bodySignature = "";
   private paneTabStrips: { strip: TextRenderable; group: TabsNode; ranges: { start: number; end: number; id: PaneId }[] }[] = [];
   private readonly launcher: Launcher;
+  private readonly jobsPanel: JobsPanel;
+  private readonly toastBox: BoxRenderable;
+  private readonly toastText: TextRenderable;
+  private toastJobs: PaneId[] = [];
   private overlayPane: PaneId | undefined;
 
   constructor(
@@ -26,7 +31,7 @@ export class MuxView {
     private readonly workspace: Workspace,
     private readonly panes: Map<PaneId, Pane>,
     private readonly tray: Tray,
-    private readonly actions: { onFocusPane: (id: PaneId) => void; onOpenWidget: (index: number) => void },
+    private readonly actions: { onFocusPane: (id: PaneId) => void; onOpenWidget: (index: number) => void; onOpenJob: (id: PaneId) => void },
   ) {
     const root = new BoxRenderable(renderer, { flexDirection: "column", width: "100%", height: "100%", backgroundColor: theme.background });
     this.tabBar = new TextRenderable(renderer, { height: 1, bg: theme.surface });
@@ -57,7 +62,28 @@ export class MuxView {
     });
     renderer.root.add(root);
     renderer.root.add(this.overlay);
+    this.toastBox = new BoxRenderable(renderer, {
+      position: "absolute",
+      right: 1,
+      bottom: 3,
+      zIndex: 150,
+      visible: false,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.border,
+      backgroundColor: theme.surface,
+      paddingLeft: 1,
+      paddingRight: 1,
+    });
+    this.toastText = new TextRenderable(renderer, { wrapMode: "none" });
+    this.toastText.onMouseDown = (event) => {
+      const id = this.toastJobs[event.y - this.toastText.screenY];
+      if (id !== undefined) this.actions.onOpenJob(id);
+    };
+    this.toastBox.add(this.toastText);
+    renderer.root.add(this.toastBox);
     this.launcher = new Launcher(renderer);
+    this.jobsPanel = new JobsPanel(renderer);
   }
 
   render(): void {
@@ -75,6 +101,24 @@ export class MuxView {
     this.trayBar.content = this.renderTray();
     this.hintBar.content = this.renderHints();
     this.launcher.render(this.workspace.prompt);
+    const showJobs = this.workspace.mode === "jobs" && !this.workspace.prompt;
+    this.jobsPanel.render(showJobs ? this.workspace.tabJobs() : undefined, this.workspace.selectedJob, Date.now());
+    this.renderToasts();
+  }
+
+  private renderToasts(): void {
+    const toasts = this.workspace.toasts();
+    this.toastBox.visible = toasts.length > 0;
+    this.toastJobs = toasts.map(({ job }) => job.id);
+    if (toasts.length === 0) return;
+    const lines = toasts.map(({ job, tab }) => {
+      const where = tab === this.workspace.tab ? "" : ` · ${tab.name}`;
+      const open = job.state === "failed" ? " · Alt a" : "";
+      return { text: `${jobBadge(job)} ${job.name} · ${jobDetail(job, Date.now())}${where}${open}`, color: job.state === "failed" ? commandColors.failed : commandColors.succeeded };
+    });
+    this.toastText.content = styled(lines.flatMap((line, index) => [...(index > 0 ? ["\n"] : []), fg(line.color)(line.text)]));
+    this.toastBox.width = Math.min(Math.max(...lines.map((line) => Bun.stringWidth(line.text))) + 4, Math.floor(this.renderer.width * 0.6));
+    this.toastBox.height = lines.length + 2;
   }
 
   private renderBody(root: LayoutNode, zoomed: PaneId | undefined): void {
@@ -111,7 +155,9 @@ export class MuxView {
     this.overlay.left = `${(100 - width) / 2}%`;
     this.overlay.top = `${(100 - height) / 2}%`;
     const waiting = this.workspace.popupsWaiting(this.workspace.tab) - (popup.kind === "ask" ? 1 : 0);
-    pane.show(waiting > 0 ? `${popup.title} (+${waiting} waiting)` : popup.title, this.workspace.prompt === undefined);
+    const job = popup.kind === "job" ? this.workspace.jobStatus(popup.id) : undefined;
+    const title = job ? `${jobBadge(job)} ${job.name} · ${jobDetail(job, Date.now())}` : popup.title;
+    pane.show(waiting > 0 ? `${title} (+${waiting} waiting)` : title, this.workspace.prompt === undefined);
     return true;
   }
 

@@ -19,6 +19,26 @@ class FakeHost implements PaneHost {
     this.commands.set(id, command);
     this.tabOf.set(id, tabId);
   }
+  jobs: [number, string[], number][] = [];
+  createJob(id: number, _cwd: string | undefined, command: string[], tabId: number): void {
+    this.jobs.push([id, command, tabId]);
+    this.tabOf.set(id, tabId);
+  }
+  tracked: number[] = [];
+  trackJob(id: number): void {
+    this.tracked.push(id);
+  }
+  untracked: number[] = [];
+  untrackJob(id: number): void {
+    this.untracked.push(id);
+  }
+  running = new Map<number, string>();
+  runningCommand(id: number): string | undefined {
+    return this.running.get(id);
+  }
+  shellCommand(text: string): string[] {
+    return ["sh", "-c", text];
+  }
   started: [number, string[][], string | undefined][] = [];
   stopped: number[] = [];
   startServices(tabId: number, services: { command: string[] }[], cwd: string | undefined): void {
@@ -708,5 +728,152 @@ describe("Workspace", () => {
     const workspace = new Workspace(new FakeHost());
     expect(press(workspace, "ctrl+n")).toEqual([false]);
     expect(workspace.mode).toBe("normal");
+  });
+  describe("jobs", () => {
+    function ide(clock: { now: number }, host = new FakeHost()) {
+      const config = configSchema.parse({
+        projects: { layout: "ide" },
+        layouts: { ide: { row: [{ focus: true }, { tabs: [{ command: ["remax"] }, {}] }] } },
+      });
+      const workspace = new Workspace(host, "/home", config, () => clock.now);
+      workspace.openProject("merlin");
+      return { host, workspace };
+    }
+
+    test("Ctrl+s n runs a typed command out of sight and badges the tab while it runs", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      press(workspace, "ctrl+s", "n");
+      type(workspace, "make test");
+      press(workspace, "return");
+      expect(host.jobs).toEqual([[5, ["sh", "-c", "make test"], workspace.tab.id]]);
+      expect(workspace.tabJobs().map((job) => [job.name, job.state])).toEqual([["make test", "running"]]);
+      expect(paneIds(workspace.tab.root)).toEqual([2, 3, 4]);
+      expect(workspace.tabCommandState(workspace.tab)).toBe("running");
+      expect(workspace.mode).toBe("normal");
+    });
+
+    test("a job that succeeds toasts for five seconds", () => {
+      const clock = { now: 0 };
+      const { workspace } = ide(clock);
+      const id = workspace.runJob(2, ["true"])!;
+      clock.now = 3000;
+      workspace.jobFinished(id, 0);
+      expect(workspace.toasts().map((toast) => toast.job.state)).toEqual(["succeeded"]);
+      expect(workspace.nextToastExpiry()).toBe(5000);
+      expect(workspace.tabCommandState(workspace.tab)).toBeUndefined();
+      clock.now = 8000;
+      expect(workspace.toasts()).toEqual([]);
+      expect(workspace.nextToastExpiry()).toBeUndefined();
+    });
+
+    test("a failed job stays toasted, badges its tab, and Alt a opens it", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      const id = workspace.runJob(2, ["false"], "build")!;
+      press(workspace, "ctrl+t", "c");
+      workspace.jobFinished(id, 2);
+      clock.now = 60_000;
+      expect(workspace.toasts().map((toast) => [toast.job.name, toast.tab.name])).toEqual([["build", "merlin"]]);
+      expect(workspace.tabCommandState(workspace.tabs[1]!)).toBe("failed");
+      press(workspace, "alt+a");
+      expect(workspace.tab.name).toBe("merlin");
+      expect(workspace.popup).toMatchObject({ id, kind: "job" });
+      expect(workspace.toasts()).toEqual([]);
+      host.held.add(id);
+      press(workspace, "escape");
+      expect(workspace.popup).toBeUndefined();
+      expect(workspace.tabJobs()).toHaveLength(1);
+    });
+
+    test("a finished job's popup re-runs, moves into the layout, or closes", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      const id = workspace.runJob(2, ["false"], "build")!;
+      workspace.jobFinished(id, 1);
+      workspace.openJob(id);
+      host.held.add(id);
+      press(workspace, "return");
+      expect(host.reruns).toEqual([id]);
+      expect(workspace.jobStatus(id)?.state).toBe("running");
+      workspace.jobFinished(id, 1);
+      host.held.add(id);
+      press(workspace, "p");
+      expect(workspace.tab.root).toMatchObject({ children: [{ id: 2 }, { kind: "tabs", panes: [3, 4, id] }] });
+      expect(workspace.tab.focused).toBe(id);
+      expect(workspace.paneNames.get(id)).toBe("build");
+      expect(host.untracked).toEqual([id]);
+      expect(workspace.jobs).toEqual([]);
+      const other = workspace.runJob(2, ["false"])!;
+      workspace.jobFinished(other, 1);
+      workspace.openJob(other);
+      host.held.add(other);
+      press(workspace, "x");
+      expect(host.destroyed).toContain(other);
+      expect(workspace.jobs).toEqual([]);
+      expect(workspace.popup).toBeUndefined();
+    });
+
+    test("jobs mode picks a job with the arrows and acts on it", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      workspace.runJob(2, ["one"]);
+      const two = workspace.runJob(2, ["two"])!;
+      press(workspace, "ctrl+s", "down", "r");
+      expect(host.reruns).toEqual([two]);
+      press(workspace, "return");
+      expect(workspace.popup?.id).toBe(two);
+      press(workspace, "ctrl+s", "h");
+      expect(workspace.popup).toBeUndefined();
+      press(workspace, "ctrl+s", "x");
+      expect(workspace.selectedJob).toBe(0);
+      expect(workspace.tabJobs().map((job) => job.name)).toEqual(["one"]);
+    });
+
+    test("Ctrl+s b sends a pane running a command to the background until the command finishes", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      press(workspace, "ctrl+s", "b");
+      expect(workspace.message).toBe("Nothing is running in this pane");
+      press(workspace, "alt+s", "alt+e");
+      host.running.set(4, "cargo build");
+      press(workspace, "ctrl+s", "b");
+      expect(workspace.tab.root).toMatchObject({ children: [{ id: 2 }, { id: 3 }] });
+      expect(workspace.tab.focused).toBe(3);
+      expect(host.tracked).toEqual([4]);
+      expect(workspace.tabJobs().map((job) => [job.name, job.command])).toEqual([["cargo build", undefined]]);
+      workspace.jobFinished(4, 0);
+      expect(workspace.jobStatus(4)?.state).toBe("succeeded");
+      workspace.openJob(4);
+      press(workspace, "ctrl+s", "r");
+      expect(workspace.message).toBe("Only jobs started from a command can re-run");
+      press(workspace, "ctrl+s", "p");
+      expect(paneIds(workspace.tab.root)).toEqual([2, 3, 4]);
+      expect(workspace.tab.focused).toBe(4);
+    });
+
+    test("the last pane in a tab can't go to the background", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host);
+      host.running.set(1, "sleep 30");
+      press(workspace, "ctrl+s", "b");
+      expect(workspace.message).toBe("The tab's last pane can't go to the background");
+      expect(workspace.jobs).toEqual([]);
+    });
+
+    test("a backgrounded pane's shell exiting drops the job, and closing a tab closes its jobs", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      host.running.set(2, "sleep 30");
+      press(workspace, "ctrl+s", "b");
+      workspace.paneExited(2);
+      expect(workspace.jobs).toEqual([]);
+      expect(workspace.message).toBe("sleep 30 ended");
+      const id = workspace.runJob(3, ["sleep", "30"])!;
+      workspace.paneExited(3);
+      workspace.paneExited(4);
+      expect(host.destroyed).toContain(id);
+      expect(workspace.jobs).toEqual([]);
+    });
   });
 });

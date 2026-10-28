@@ -1,6 +1,6 @@
 import type { Axis, Direction } from "./layout.ts";
 
-export type Mode = "normal" | "locked" | "pane" | "tab" | "session" | "tray";
+export type Mode = "normal" | "locked" | "pane" | "tab" | "session" | "tray" | "jobs";
 
 export type Command =
   | { type: "mode"; mode: Mode }
@@ -24,6 +24,14 @@ export type Command =
   | { type: "last-tab" }
   | { type: "select-widget"; delta: number }
   | { type: "open-widget" }
+  | { type: "run-job" }
+  | { type: "background-pane" }
+  | { type: "select-job"; delta: number }
+  | { type: "open-job" }
+  | { type: "hide-job" }
+  | { type: "rerun-job" }
+  | { type: "promote-job" }
+  | { type: "close-job" }
   | { type: "quit" };
 
 export type Binding = { keys: string[]; command: Command; then?: Mode };
@@ -40,6 +48,7 @@ const vim: Record<Direction, string> = { left: "h", down: "j", up: "k", right: "
 const modeSwitches: { key: string; mode: Mode; keys: string; description: string }[] = [
   { key: "ctrl+p", mode: "pane", keys: "^p", description: "pane" },
   { key: "ctrl+t", mode: "tab", keys: "^t", description: "tab" },
+  { key: "ctrl+s", mode: "jobs", keys: "^s", description: "jobs" },
   { key: "ctrl+o", mode: "session", keys: "^o", description: "session" },
   { key: "ctrl+g", mode: "locked", keys: "^g", description: "lock" },
 ];
@@ -134,6 +143,31 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["escape"], command: { type: "mode", mode: "normal" } },
     ],
     hints: [{ keys: "h/s", description: "prev/next widget" }, { keys: "Enter", description: "open" }, backHint],
+  },
+  jobs: {
+    bindings: [
+      { keys: ["n"], command: { type: "run-job" }, then: "normal" },
+      { keys: ["b"], command: { type: "background-pane" }, then: "normal" },
+      { keys: ["up"], command: { type: "select-job", delta: -1 } },
+      { keys: ["down"], command: { type: "select-job", delta: 1 } },
+      { keys: ["return"], command: { type: "open-job" }, then: "normal" },
+      { keys: ["h"], command: { type: "hide-job" }, then: "normal" },
+      { keys: ["r"], command: { type: "rerun-job" } },
+      { keys: ["p"], command: { type: "promote-job" }, then: "normal" },
+      { keys: ["x"], command: { type: "close-job" } },
+      { keys: ["escape"], command: { type: "mode", mode: "normal" } },
+    ],
+    hints: [
+      { keys: "n", description: "new job" },
+      { keys: "b", description: "background this pane" },
+      { keys: "↑↓", description: "select" },
+      { keys: "Enter", description: "open" },
+      { keys: "h", description: "hide" },
+      { keys: "r", description: "rerun" },
+      { keys: "p", description: "to pane" },
+      { keys: "x", description: "close" },
+      backHint,
+    ],
   },
   session: {
     bindings: [

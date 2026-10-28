@@ -75,6 +75,24 @@ export default {
 
 From inside a pane, `qmux pane open [--right|--below|--tab] [--name NAME] [--no-focus] -- COMMAND...` opens a pane beside it in the same tab and prints the new pane's id. With `--popup` (and optionally `--width`/`--height` in percent), the command opens over the tab at once and takes the keys. The popup closes when the command exits successfully. After a failure it stays up until the next key, so the error can be read.
 
+## Jobs
+
+A job is a command that runs out of sight in a tab, in a terminal of its own. Press Ctrl+s for jobs mode, which lists the tab's jobs:
+
+- **n** prompts for a command and runs it as a job in the focused pane's directory.
+- **b** sends the focused pane to the background while it is busy with a long command. Its shell keeps running, and the job is done when that command finishes. This needs the fish integration that also drives the `⏳` badges.
+- **↑/↓** pick a job, **Enter** opens it over the tab, **h** hides it again, **r** re-runs it, **p** moves it into the layout as a pane, and **x** closes it, stopping it if it is still running.
+
+While a job runs, its tab shows `⏳`. A job that succeeds shows a toast for five seconds. A job that fails keeps its toast and puts `💥` on its tab until you open it; Alt a or a click on the toast opens it. A finished job's popup takes Enter to re-run, p to move into the layout, x to close, and Esc to hide. While a job runs, keys go to it, so Ctrl+c stops it.
+
+`qmux job run [--name NAME] [--wait] -- COMMAND...` runs a job in the tab of the pane it is called from. With `--wait` it prints the job's output, without colours, as it runs and exits with the job's exit code. That lets an agent run builds and tests that you can watch too, for example with this line in a `CLAUDE.md`:
+
+```
+Run builds and test suites with `qmux job run --wait -- <command>` so the user can follow them.
+```
+
+Closing a tab closes its jobs. A job's output is also written to `$QMUX_TAB_DIR/jobs/<id>.log`.
+
 ## Scrollback
 
 Each pane keeps 50 MB of history by default, roughly 70,000 lines at 80 columns and fewer in wider panes. Memory is only used as history fills. Set `scrollback` in the config to another number of megabytes.

@@ -225,7 +225,10 @@ export class Pty {
   }
 
   kill(): void {
-    this.child.kill();
+    const pid = this.child.pid;
+    signalGroup(pid, "SIGTERM");
+    const force = setTimeout(() => signalGroup(pid, "SIGKILL"), stopGraceMs);
+    void this.child.exited.finally(() => clearTimeout(force));
     this.close();
   }
 
@@ -257,4 +260,12 @@ export class Pty {
     reactor!.unwatch(this.slot);
     closeSync(this.master);
   }
+}
+
+const stopGraceMs = 3000;
+
+function signalGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {}
 }

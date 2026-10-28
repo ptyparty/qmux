@@ -11,8 +11,8 @@ export type PaneSpec = { command?: string[]; name?: string; focus?: boolean };
 export type SplitSpec = { row: LayoutSpec[] } | { column: LayoutSpec[] };
 export type TabsSpec = { tabs: PaneSpec[] };
 export type LayoutSpec = PaneSpec | SplitSpec | TabsSpec;
-export type ServiceSpec = { command: string[]; name?: string };
-export type LayoutEntry = { services: ServiceSpec[]; layout: LayoutSpec };
+export type JobSpec = { command: string[]; name?: string; dock: boolean };
+export type LayoutEntry = { jobs: JobSpec[]; layout: LayoutSpec };
 
 const paneSpec = z
   .object({
@@ -31,17 +31,21 @@ const layoutSpec: z.ZodType<LayoutSpec> = z.lazy(() =>
   ]),
 );
 
-const serviceSpec = z
+const jobSpec = z
   .object({
     command: z.array(z.string()).min(1).describe("Program and arguments"),
-    name: z.string().regex(/^[\w.-]+$/, "service names use letters, digits, \".\", \"_\", and \"-\"").optional(),
+    name: z.string().optional(),
+    dock: z.boolean().default(false).describe("Show the job's name and last line of output at the bottom of the tab"),
   })
   .strict();
 
 const layoutEntry: z.ZodType<LayoutEntry, unknown> = z
-  .looseObject({ services: z.array(serviceSpec).default([]).describe("Background processes started with the tab and stopped when it closes") })
-  .transform(({ services, ...layout }) => ({ services, layout: layout as unknown }))
-  .pipe(z.object({ services: z.array(serviceSpec), layout: layoutSpec }));
+  .looseObject({
+    jobs: z.array(jobSpec).default([]).describe("Jobs started out of sight with the tab and closed with it"),
+    services: z.undefined({ error: "services are now jobs: rename `services:` to `jobs:`" }).optional(),
+  })
+  .transform(({ jobs, services: _services, ...layout }) => ({ jobs, layout: layout as unknown }))
+  .pipe(z.object({ jobs: z.custom<JobSpec[]>(), layout: layoutSpec }));
 
 export const configSchema = z
   .object({

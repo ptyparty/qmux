@@ -1,5 +1,5 @@
 import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
-import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type LayoutEntry, type ServiceSpec } from "./config.ts";
+import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type LayoutEntry } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
@@ -9,7 +9,7 @@ export type PopupSize = { width: number; height: number };
 export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view" | "job"; askingPane?: PaneId; size?: PopupSize };
 
 export type JobState = "running" | "succeeded" | "failed";
-export type Job = { id: PaneId; tabId: number; name: string; command?: string[]; state: JobState; code?: number | null; started: number; finished?: number; seen: boolean; agent?: boolean };
+export type Job = { id: PaneId; tabId: number; name: string; command?: string[]; state: JobState; code?: number | null; started: number; finished?: number; seen: boolean; agent?: boolean; dock: boolean; layout?: boolean };
 export type Reply = { text: string; at: number; unread: boolean };
 export type Toast = { kind: "job"; job: Job; tab: Tab } | { kind: "reply"; id: PaneId; reply: Reply; tab: Tab };
 
@@ -45,8 +45,7 @@ export interface PaneHost {
   shellCommand(text: string): string[];
   composeClaude(near: PaneId, candidates: PaneId[]): string | undefined;
   peekReply(near: PaneId, title: string, text: string): void;
-  startServices(tabId: number, services: ServiceSpec[], cwd: string | undefined): void;
-  stopServices(tabId: number): void;
+  tabClosed(tabId: number): void;
   projects(): Project[];
   destroy(id: PaneId): void;
   closePopup(id: PaneId): void;
@@ -81,7 +80,6 @@ export class Workspace {
   private readonly hideOnReply = new Set<PaneId>();
   private lastJob: PaneId | undefined;
   readonly commands = new Map<PaneId, CommandState>();
-  readonly failedServices = new Map<number, string>();
   readonly jobs: Job[] = [];
   selectedJob = 0;
   private nextPaneId = 1;
@@ -247,12 +245,12 @@ export class Workspace {
     return left.length > 0 ? Math.max(Math.min(...left), 0) : undefined;
   }
 
-  runJob(near: PaneId, command: string[], name?: string, from: { cwd?: string; env?: Record<string, string> } = {}): PaneId | undefined {
+  runJob(near: PaneId, command: string[], name?: string, from: { cwd?: string; env?: Record<string, string>; dock?: boolean } = {}): PaneId | undefined {
     const tab = this.tabOf(near);
     if (!tab) return undefined;
     const id = this.nextPaneId++;
     this.host.createJob(id, from.cwd ?? this.host.cwd(near), command, tab.id, from.env);
-    this.jobs.push({ id, tabId: tab.id, name: name ?? command.join(" "), command, state: "running", started: this.now(), seen: false });
+    this.jobs.push({ id, tabId: tab.id, name: name ?? command.join(" "), command, state: "running", started: this.now(), seen: false, dock: from.dock ?? false });
     return id;
   }
 
@@ -342,7 +340,7 @@ export class Workspace {
     tab.focused = sibling ?? paneIds(root)[0]!;
     tab.zoomed = false;
     this.commands.delete(id);
-    this.jobs.push({ id, tabId: tab.id, name: this.paneNames.get(id) ?? running, state: "running", started: this.now(), seen: false });
+    this.jobs.push({ id, tabId: tab.id, name: this.paneNames.get(id) ?? running, state: "running", started: this.now(), seen: false, dock: false });
     this.host.trackJob(id, tab.id);
   }
 
@@ -556,13 +554,6 @@ export class Workspace {
     return id;
   }
 
-  serviceFailed(tabId: number, service: string, detail: string): void {
-    const tab = this.tabs.find((candidate) => candidate.id === tabId);
-    if (!tab) return;
-    this.failedServices.set(tabId, service);
-    this.message = `The ${service} service in ${tab.name} stopped: ${detail}`;
-  }
-
   private projects(): Project[] {
     const named = namedTabs(this.config);
     const names = new Set(named.map((tab) => tab.name));
@@ -697,6 +688,10 @@ export class Workspace {
         return this.withJob((job) => this.popupExited(job.id));
       case "rerun-job":
         return this.withJob((job) => this.rerunJob(job));
+      case "dock-job":
+        return this.withJob((job) => {
+          job.dock = !job.dock;
+        });
       case "promote-job":
         return this.withJob((job) => this.promoteJob(job));
       case "close-job":
@@ -743,8 +738,11 @@ export class Workspace {
       if (pane.name) this.paneNames.set(pane.id, pane.name);
       this.host.create(pane.id, cwd, pane.command, tab.id);
     }
-    const services = options.layout?.services ?? [];
-    if (services.length > 0) this.host.startServices(tab.id, services, cwd);
+    for (const job of options.layout?.jobs ?? []) {
+      const id = this.runJob(tab.focused, job.command, job.name, { cwd, dock: job.dock });
+      const started = id === undefined ? undefined : this.jobStatus(id);
+      if (started) started.layout = true;
+    }
   }
 
   private moveTab(delta: number): void {
@@ -758,8 +756,7 @@ export class Workspace {
   private removeTab(index: number): void {
     for (const job of this.tabJobs(this.tabs[index])) this.closeJob(job.id);
     const [removed] = this.tabs.splice(index, 1);
-    this.host.stopServices(removed!.id);
-    this.failedServices.delete(removed!.id);
+    this.host.tabClosed(removed!.id);
     if (this.tabs.length === 0) {
       this.quit = true;
       return;
@@ -843,7 +840,7 @@ function keyLabel(name: string): string {
 }
 
 function jobBadge(job: Job): CommandState | undefined {
-  if (job.state === "running") return job.agent ? undefined : "running";
+  if (job.state === "running") return job.agent || job.layout || job.dock ? undefined : "running";
   return job.state === "failed" && !job.seen ? "failed" : undefined;
 }
 

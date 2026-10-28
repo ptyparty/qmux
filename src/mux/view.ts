@@ -24,6 +24,8 @@ export class MuxView {
   private readonly toastBox: BoxRenderable;
   private readonly toastText: TextRenderable;
   private toastTargets: PaneId[] = [];
+  private readonly dock: TextRenderable;
+  private dockJobs: PaneId[] = [];
   private overlayPane: PaneId | undefined;
 
   constructor(
@@ -31,7 +33,7 @@ export class MuxView {
     private readonly workspace: Workspace,
     private readonly panes: Map<PaneId, Pane>,
     private readonly tray: Tray,
-    private readonly actions: { onFocusPane: (id: PaneId) => void; onOpenWidget: (index: number) => void; onOpenJob: (id: PaneId) => void },
+    private readonly actions: { onFocusPane: (id: PaneId) => void; onOpenWidget: (index: number) => void; onOpenJob: (id: PaneId) => void; jobLine: (id: PaneId) => string | undefined },
   ) {
     const root = new BoxRenderable(renderer, { flexDirection: "column", width: "100%", height: "100%", backgroundColor: theme.background });
     this.tabBar = new TextRenderable(renderer, { height: 1, bg: theme.surface });
@@ -47,8 +49,14 @@ export class MuxView {
     statusRow.add(this.modeBar);
     statusRow.add(this.trayBar);
     this.hintBar = new TextRenderable(renderer, { height: 1, fg: theme.muted });
+    this.dock = new TextRenderable(renderer, { flexShrink: 0, wrapMode: "none", visible: false });
+    this.dock.onMouseDown = (event) => {
+      const id = this.dockJobs[event.y - this.dock.screenY];
+      if (id !== undefined) this.actions.onOpenJob(id);
+    };
     root.add(this.tabBar);
     root.add(this.body);
+    root.add(this.dock);
     root.add(statusRow);
     root.add(this.hintBar);
     this.overlay = new BoxRenderable(renderer, {
@@ -65,7 +73,7 @@ export class MuxView {
     this.toastBox = new BoxRenderable(renderer, {
       position: "absolute",
       right: 1,
-      bottom: 3,
+      bottom: toastBottom,
       zIndex: 150,
       visible: false,
       border: true,
@@ -106,6 +114,33 @@ export class MuxView {
     const showJobs = this.workspace.mode === "jobs" && !this.workspace.prompt;
     this.jobsPanel.render(showJobs ? this.workspace.tabJobs() : undefined, this.workspace.selectedJob, Date.now());
     this.renderToasts();
+    this.renderDock();
+  }
+
+  private renderDock(): void {
+    const jobs = this.workspace.tabJobs().filter((job) => job.dock);
+    this.dock.visible = jobs.length > 0;
+    this.dockJobs = jobs.map((job) => job.id);
+    this.toastBox.bottom = toastBottom + jobs.length;
+    if (jobs.length === 0) return;
+    this.dock.height = jobs.length;
+    const nameWidth = Math.min(Math.max(...jobs.map((job) => Bun.stringWidth(job.name))), 24);
+    const room = Math.max(this.renderer.width - nameWidth - 8, 10);
+    const rows = jobs.map((job) => {
+      const name = fit(job.name, nameWidth, true);
+      const state = this.workspace.agents.get(job.id);
+      if (job.agent) {
+        const reply = this.workspace.replies.get(job.id);
+        const text = reply ? firstLine(reply.text, room) : fit(state ? agentLabels[state] : "ready", room);
+        const color = state ? agentColors[state] : theme.muted;
+        return [bold(fg(color)(` ${state ? agentBadges[state] : "🧠"} ${name}`)), fg(theme.muted)(" │ "), fg(theme.text)(text)];
+      }
+      const line = this.actions.jobLine(job.id) || (job.state === "running" ? "no output yet" : jobDetail(job, Date.now()));
+      const shown = fit(line, room);
+      const color = job.state === "running" ? theme.text : commandColors[job.state];
+      return [bold(fg(color)(` ${jobBadge(job)} ${name}`)), fg(theme.muted)(" │ "), fg(theme.muted)(shown)];
+    });
+    this.dock.content = styled(rows.flatMap((row, index) => [...(index > 0 ? ["\n"] : []), ...row]));
   }
 
   private renderToasts(): void {
@@ -251,8 +286,7 @@ export class MuxView {
       const command = this.workspace.tabCommandState(tab);
       if (attention) parts.push(paint(` ${agentBadges[attention]}`, agentColors[attention]));
       if (this.workspace.tabUnread(tab)) parts.push(paint(" 💬", theme.accent));
-      const failed = command === "failed" || this.workspace.failedServices.has(tab.id) ? "failed" : command;
-      if (failed) parts.push(paint(` ${commandBadges[failed]}`, commandColors[failed]));
+      if (command) parts.push(paint(` ${commandBadges[command]}`, commandColors[command]));
       parts.push(paint(" ", theme.muted), " ");
     });
     if (this.workspace.clients > 1) parts.push(fg(theme.warning)(` ${this.workspace.clients} terminals attached `));
@@ -310,6 +344,7 @@ function modeFocusColor(mode: Mode): string {
   return mode === "normal" ? theme.accent : theme.modes[mode];
 }
 
+const toastBottom = 3;
 const defaultPopupSize = { width: 80, height: 80 };
 const agentBadges: Record<AgentState, string> = { working: "🧠", waiting: "!", done: "🚀", failed: "✗" };
 const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done", failed: "failed" };
@@ -334,6 +369,15 @@ function hintParts(mode: Mode, list: Hint[] = hints(mode)): Part[] {
 }
 
 function firstLine(text: string, max: number): string {
-  const line = text.split("\n").find((candidate) => candidate.trim())?.replace(/[*_`#>]/g, "").trim() ?? "";
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  return fit(text.split("\n").find((candidate) => candidate.trim())?.replace(/[*_`#>]/g, "").trim() ?? "", max);
+}
+
+function fit(text: string, width: number, pad = false): string {
+  if (Bun.stringWidth(text) <= width) return pad ? text + " ".repeat(width - Bun.stringWidth(text)) : text;
+  let cut = "";
+  for (const char of text) {
+    if (Bun.stringWidth(cut + char) > width - 1) break;
+    cut += char;
+  }
+  return `${cut}…${pad ? " ".repeat(Math.max(width - 1 - Bun.stringWidth(cut), 0)) : ""}`;
 }

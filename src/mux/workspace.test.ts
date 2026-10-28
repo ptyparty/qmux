@@ -20,8 +20,10 @@ class FakeHost implements PaneHost {
     this.tabOf.set(id, tabId);
   }
   jobs: [number, string[], number][] = [];
-  createJob(id: number, _cwd: string | undefined, command: string[], tabId: number): void {
+  jobCwds = new Map<number, string | undefined>();
+  createJob(id: number, cwd: string | undefined, command: string[], tabId: number): void {
     this.jobs.push([id, command, tabId]);
+    this.jobCwds.set(id, cwd);
     this.tabOf.set(id, tabId);
   }
   tracked: number[] = [];
@@ -51,13 +53,12 @@ class FakeHost implements PaneHost {
     this.composed.push(target);
     return undefined;
   }
-  started: [number, string[][], string | undefined][] = [];
-  stopped: number[] = [];
-  startServices(tabId: number, services: { command: string[] }[], cwd: string | undefined): void {
-    this.started.push([tabId, services.map((service) => service.command), cwd]);
+  closedTabs: number[] = [];
+  tabClosed(tabId: number): void {
+    this.closedTabs.push(tabId);
   }
-  stopServices(tabId: number): void {
-    this.stopped.push(tabId);
+  layoutJobs(): [string[], number, string | undefined][] {
+    return this.jobs.map(([id, command, tabId]) => [command, tabId, this.jobCwds.get(id)]);
   }
   projects(): Project[] {
     return this.knownProjects;
@@ -338,60 +339,72 @@ describe("Workspace", () => {
     expect([host.commands.get(2), host.commands.get(3), host.commands.get(4)]).toEqual([["dev", "claude"], ["remax"], undefined]);
   });
 
-  describe("tab services", () => {
+  describe("layout jobs", () => {
     const config = configSchema.parse({
       projects: { layout: "ide", layoutFor: { merlin: "served" } },
       layouts: {
         ide: { row: [{}, {}] },
-        served: { services: [{ command: ["q-space", "serve"] }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
+        served: { jobs: [{ command: ["q-space", "serve"], name: "server", dock: true }, { command: ["make", "watch"] }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
       },
     });
 
-    test("a project's own layout starts its services with the tab, and other projects use the default layout", () => {
+    test("a project's own layout starts its jobs with the tab, docked as configured", () => {
       const host = new FakeHost();
       const workspace = new Workspace(host, "/home", config);
       workspace.openProject("penguin");
-      expect(host.started).toEqual([]);
+      expect(host.layoutJobs()).toEqual([]);
       workspace.openProject("merlin");
       const merlin = workspace.tab;
-      expect(host.started).toEqual([[merlin.id, [["q-space", "serve"]], "/work/exfresso/merlin"]]);
+      expect(host.layoutJobs()).toEqual([
+        [["q-space", "serve"], merlin.id, "/work/exfresso/merlin"],
+        [["make", "watch"], merlin.id, "/work/exfresso/merlin"],
+      ]);
+      expect(workspace.tabJobs().map((job) => [job.name, job.dock])).toEqual([
+        ["server", true],
+        ["make watch", false],
+      ]);
       expect(paneIds(merlin.root).map((id) => host.tabOf.get(id))).toEqual([merlin.id, merlin.id]);
     });
 
-    test("closing the tab stops its services", () => {
+    test("closing the tab closes its jobs", () => {
       const host = new FakeHost();
       const workspace = new Workspace(host, "/home", config);
       workspace.openProject("merlin");
       const id = workspace.tab.id;
+      const jobs = workspace.tabJobs().map((job) => job.id);
       press(workspace, "ctrl+t", "x");
       type(workspace, "merlin");
       press(workspace, "return");
-      expect(host.stopped).toEqual([id]);
+      expect(host.closedTabs).toEqual([id]);
+      expect(host.destroyed).toEqual(expect.arrayContaining(jobs));
+      expect(workspace.jobs).toEqual([]);
     });
 
-    test("the last pane exiting stops the tab's services", () => {
+    test("the last pane exiting closes the tab's jobs", () => {
       const host = new FakeHost();
       const workspace = new Workspace(host, "/home", config);
       workspace.openProject("merlin");
       const tab = workspace.tab;
       for (const pane of paneIds(tab.root)) workspace.paneExited(pane);
-      expect(host.stopped).toEqual([tab.id]);
+      expect(host.closedTabs).toEqual([tab.id]);
       expect(workspace.tabs).not.toContain(tab);
+      expect(workspace.jobs).toEqual([]);
     });
 
-    test("a service that stops on its own marks its tab", () => {
+    test("Ctrl+s d docks and undocks the selected job", () => {
       const workspace = new Workspace(new FakeHost(), "/home", config);
       workspace.openProject("merlin");
-      workspace.serviceFailed(workspace.tab.id, "q-space", "exited with code 1");
-      expect(workspace.failedServices.get(workspace.tab.id)).toBe("q-space");
-      expect(workspace.message).toBe("The q-space service in merlin stopped: exited with code 1");
+      press(workspace, "ctrl+s", "down", "d");
+      expect(workspace.tabJobs().map((job) => job.dock)).toEqual([true, true]);
+      press(workspace, "up", "d");
+      expect(workspace.tabJobs().map((job) => job.dock)).toEqual([false, true]);
     });
   });
 
   describe("named tabs", () => {
     const config = configSchema.parse({
       layouts: {
-        "q-space": { services: [{ command: ["q-space", "serve"] }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
+        "q-space": { jobs: [{ command: ["q-space", "serve"] }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
         logs: { row: [{}] },
       },
       tabs: { "q-space": { layout: "q-space", cwd: "/home/me/q-space" }, logs: { layout: "logs", cwd: "/var/log" }, penguin: { layout: "logs", cwd: "/elsewhere" } },
@@ -408,7 +421,7 @@ describe("Workspace", () => {
         [2, "/home/me/q-space"],
         [3, "/home/me/q-space"],
       ]);
-      expect(host.started).toEqual([[workspace.tabs[1]!.id, [["q-space", "serve"]], "/home/me/q-space"]]);
+      expect(host.layoutJobs()).toEqual([[["q-space", "serve"], workspace.tabs[1]!.id, "/home/me/q-space"]]);
     });
 
     test("named tabs lead the launcher and hide a project of the same name", () => {
@@ -423,7 +436,7 @@ describe("Workspace", () => {
       ]);
     });
 
-    test("a closed named tab reopens with its layout and services", () => {
+    test("a closed named tab reopens with its layout and jobs", () => {
       const host = new FakeHost();
       const workspace = new Workspace(host, "/home", config);
       workspace.active = 1;
@@ -433,9 +446,9 @@ describe("Workspace", () => {
       expect(workspace.tabs.map((tab) => tab.name)).toEqual(["logs"]);
       expect(workspace.openProject("q-space")).toBeUndefined();
       expect(workspace.tabs.map((tab) => tab.name)).toEqual(["logs", "q-space"]);
-      expect(host.started.map(([, commands, cwd]) => [commands, cwd])).toEqual([
-        [[["q-space", "serve"]], "/home/me/q-space"],
-        [[["q-space", "serve"]], "/home/me/q-space"],
+      expect(host.layoutJobs().map(([command, , cwd]) => [command, cwd])).toEqual([
+        [["q-space", "serve"], "/home/me/q-space"],
+        [["q-space", "serve"], "/home/me/q-space"],
       ]);
     });
   });

@@ -54,14 +54,14 @@ describe("config", () => {
         projects: { layout: "ide", layoutFor: { "q-space": "q-space" } },
         layouts: {
           ide: { row: [{}, {}] },
-          "q-space": { services: [{ command: ["q-space", "serve"], name: "server" }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
+          "q-space": { jobs: [{ command: ["q-space", "serve"], name: "server", dock: true }], row: [{ command: ["q-space", "pane", "stories"] }, {}] },
         },
       };`,
     );
     const { config, error } = await loadConfig(path);
     expect(error).toBeUndefined();
-    expect(config.layouts.ide).toEqual({ services: [], layout: { row: [{}, {}] } });
-    expect(config.layouts["q-space"]!.services).toEqual([{ command: ["q-space", "serve"], name: "server" }]);
+    expect(config.layouts.ide).toEqual({ jobs: [], layout: { row: [{}, {}] } });
+    expect(config.layouts["q-space"]!.jobs).toEqual([{ command: ["q-space", "serve"], name: "server", dock: true }]);
     expect(config.layouts["q-space"]!.layout).toEqual({ row: [{ command: ["q-space", "pane", "stories"] }, {}] });
     expect(projectLayout(config, { name: "q-space", dir: "/q" })).toBe(config.layouts["q-space"]);
     expect(projectLayout(config, { name: "penguin", dir: "/p" })).toBe(config.layouts.ide);
@@ -88,10 +88,11 @@ describe("config", () => {
     ]);
   });
 
-  test("bad services and unknown project layouts are errors", async () => {
+  test("bad jobs, old services and unknown project layouts are errors", async () => {
     for (const [name, source] of [
-      ["empty-service.ts", `export default { layouts: { a: { services: [{ command: [] }], row: [{}] } } };`],
-      ["service-name.ts", `export default { layouts: { a: { services: [{ command: ["x"], name: "a/b" }], row: [{}] } } };`],
+      ["empty-job.ts", `export default { layouts: { a: { jobs: [{ command: [] }], row: [{}] } } };`],
+      ["job-key.ts", `export default { layouts: { a: { jobs: [{ command: ["x"], docked: true }], row: [{}] } } };`],
+      ["old-services.ts", `export default { layouts: { a: { services: [{ command: ["x"] }], row: [{}] } } };`],
       ["layout-for.ts", `export default { projects: { layoutFor: { "q-space": "nope" } } };`],
       ["tab-layout.ts", `export default { tabs: { q: { layout: "nope" } } };`],
       ["startup.ts", `export default { layouts: { a: { row: [{}] } }, tabs: { q: { layout: "a" } }, startup: ["nope"] };`],

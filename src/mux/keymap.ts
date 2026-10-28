@@ -24,6 +24,7 @@ export type Command =
   | { type: "compose-claude" }
   | { type: "peek-reply" }
   | { type: "toggle-job" }
+  | { type: "dock-job" }
   | { type: "last-tab" }
   | { type: "select-widget"; delta: number }
   | { type: "open-widget" }
@@ -163,6 +164,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["h"], command: { type: "hide-job" }, then: "normal" },
       { keys: ["r"], command: { type: "rerun-job" } },
       { keys: ["p"], command: { type: "promote-job" }, then: "normal" },
+      { keys: ["d"], command: { type: "dock-job" } },
       { keys: ["x"], command: { type: "close-job" } },
       { keys: ["escape"], command: { type: "mode", mode: "normal" } },
     ],
@@ -174,6 +176,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "h", description: "hide" },
       { keys: "r", description: "rerun" },
       { keys: "p", description: "to pane" },
+      { keys: "d", description: "dock" },
       { keys: "x", description: "close" },
       backHint,
     ],

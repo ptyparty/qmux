@@ -86,8 +86,8 @@ export class AskStore {
     }
   }
 
-  async pending(): Promise<AskMeta[]> {
-    const asks = await this.existing();
+  async pending(owner?: AskOwner): Promise<AskMeta[]> {
+    const asks = await this.existing(owner && ((meta) => sameOwner(meta.owner, owner)));
     return asks.filter((entry) => entry.status.status === "pending").map((entry) => entry.meta);
   }
 

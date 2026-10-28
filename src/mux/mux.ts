@@ -1,6 +1,6 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { randomBytes } from "node:crypto";
-import { closeSync, ftruncateSync, openSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, ftruncateSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { ensurePrivateDir, runtimeDir } from "../private-dir.ts";
 import type { Config } from "./config.ts";
@@ -191,9 +191,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     peekReply: (near, title, text) => {
       const tabId = workspace.tabOf(near)?.id;
       if (tabId === undefined) return;
-      const spec = join(services.tabDir(tabId), "peek.json");
-      writeFileSync(spec, JSON.stringify({ title, elements: [{ type: "markdown", text }], submitLabel: "Done" }));
-      openViewPopup(near, [...selfCommand(), "form", spec], title, { width: 80, height: 80 });
+      const spec = join(services.tabDir(tabId), `peek-${near}.json`);
+      void Bun.write(spec, JSON.stringify({ title, elements: [{ type: "markdown", text }], submitLabel: "Done" })).then(() => {
+        openViewPopup(near, [...selfCommand(), "form", spec], title, { width: 80, height: 80 });
+        refresh();
+      });
     },
     composeClaude: (near, candidates) => {
       const target = nativeClaudes.has(near) ? near : candidates.find((id) => nativeClaudes.has(id));
@@ -377,7 +379,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           const promoted = job ? undefined : panes.get(request.params.jobId);
           if (promoted) {
             const code = promoted.code;
-            const state = code === undefined ? "running" : code === 0 ? "succeeded" : "failed";
+            const state = code === undefined || code === null ? "running" : code === 0 ? "succeeded" : "failed";
             return { ok: true, result: { state, code: code ?? null } };
           }
           if (!job) return { ok: false, error: `job ${request.params.jobId} was closed` };

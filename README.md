@@ -162,6 +162,12 @@ With the hooks in place:
 - **Sessions:** with `SessionStart` (no matcher) also pointed at the hook, qmux knows which conversation each pane holds as soon as it starts. Without it, a pane's conversation is known from its first prompt. `qmux claude` uses this to send you to a conversation that is already open.
 - **Background commands as jobs:** with a `PreToolUse` hook on `Bash` (matcher `AskUserQuestion|Bash` covers both), commands Claude runs in the background, such as dev servers and watchers, run as jobs in the agent's tab, named after Claude's description of them. The job starts in the directory and environment of Claude's shell. Claude still reads its output and can stop it; stopping one closes its job. Permission rules and prompts see the command wrapped in `qmux job run`, so the qmux popup offers no "Always allow" for it.
 
+- **Waking on answers:** a second `Stop` hook running `qmux hook --wake` with `"async": true, "asyncRewake": true` waits, in the background, for forms the agent opened and left pending. When you answer or dismiss one, Claude wakes up with the answer instead of waiting for your next prompt.
+
+```json
+{ "type": "command", "command": "/home/you/.bun/bin/bun /home/you/.bun/bin/qmux hook --wake", "async": true, "asyncRewake": true, "timeout": 86400 }
+```
+
 Outside qmux, `qmux hook` exits at once and does nothing.
 
 ## Development

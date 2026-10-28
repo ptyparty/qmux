@@ -1,3 +1,5 @@
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ask, askOwner } from "../ask/ask.ts";
 import { selfCommand, shellQuote } from "../ask/hosts.ts";
 import { AskStore, type AskOwner, type AskStatus, type UnseenResult } from "../ask/store.ts";
@@ -283,6 +285,43 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     return notice && JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: notice } });
   }
   return undefined;
+}
+
+export async function waitForAnswers(env: Record<string, string | undefined>, input: HookInput, store = new AskStore(), pollMs = 500, maxMs = 12 * 3_600_000): Promise<string | undefined> {
+  const attached = askOwner(env) ? undefined : attachedPaneEnv(input.session_id);
+  const pane = askOwner(env) ?? (attached && askOwner(attached));
+  if (!pane) return undefined;
+  const lock = join(store.root, `wake-${pane.server ?? "any"}-${pane.paneId}.pid`);
+  replaceWaiter(lock);
+  const deadline = Date.now() + maxMs;
+  try {
+    for (;;) {
+      const open = await store.pending(pane);
+      const notice = unseenNotice(await store.claimUnseen(pane));
+      if (notice) return notice;
+      if (open.length === 0 || Date.now() >= deadline || !ownsLock(lock)) return undefined;
+      await Bun.sleep(pollMs);
+    }
+  } finally {
+    if (ownsLock(lock)) rmSync(lock, { force: true });
+  }
+}
+
+function replaceWaiter(lock: string): void {
+  try {
+    const previous = Number(readFileSync(lock, "utf8"));
+    const command = readFileSync(`/proc/${previous}/cmdline`, "utf8").split("\0");
+    if (previous !== process.pid && command.includes("hook") && command.includes("--wake")) process.kill(previous, "SIGTERM");
+  } catch {}
+  writeFileSync(lock, String(process.pid));
+}
+
+function ownsLock(lock: string): boolean {
+  try {
+    return Number(readFileSync(lock, "utf8")) === process.pid;
+  } catch {
+    return false;
+  }
 }
 
 export function unseenNotice(unseen: UnseenResult[]): string | undefined {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskStore } from "../ask/store.ts";
 import { serveControl, type ControlRequest } from "../mux/control.ts";
-import { backgroundAsJob, sessionForEvent, permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
+import { backgroundAsJob, sessionForEvent, waitForAnswers, permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-hook-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -109,6 +109,20 @@ describe("qmux hook", () => {
       restore("QMUX_PANE_ID", previousPane);
     }
     expect(requests).toEqual([{ method: "agent.state", params: { paneId: 7, state: "done" } }]);
+  });
+
+  test("the wake hook waits for the pane's open form and returns its answer once", async () => {
+    const env = { QMUX_SOCKET: join(dir, "wake.sock"), QMUX_PANE_ID: "5" };
+    const store = new AskStore(join(dir, "wake-asks"));
+    expect(await waitForAnswers(env, {}, store, 5)).toBeUndefined();
+    const ask = await store.create({ title: "Deploy?", elements: [] }, "qmux", { socket: env.QMUX_SOCKET, paneId: 5 });
+    await store.create({ title: "Elsewhere", elements: [] }, "qmux", { socket: env.QMUX_SOCKET, paneId: 6 });
+    const woken = waitForAnswers(env, {}, store, 5);
+    await Bun.sleep(20);
+    await store.complete(ask.id, { status: "submitted", values: { go: true } });
+    expect(await woken).toContain(`"Deploy?" (${ask.id}) was answered: {"go":true}`);
+    expect(await waitForAnswers(env, {}, store, 5)).toBeUndefined();
+    expect(await waitForAnswers({}, {}, store, 5)).toBeUndefined();
   });
 
   test("a prompt tells the agent about forms closed while it was not waiting", async () => {

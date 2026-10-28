@@ -7,7 +7,7 @@ import { HostLaunchError, hostNames, type HostName } from "./ask/hosts.ts";
 import { AskStore, UnknownAskError } from "./ask/store.ts";
 import { UnsafeDirectoryError } from "./private-dir.ts";
 import { formSpec, parseFormSpec, type FormSpec } from "./form/schema.ts";
-import { runHook } from "./hooks/hook.ts";
+import { runHook, waitForAnswers } from "./hooks/hook.ts";
 import { sendControl } from "./mux/control.ts";
 import { defaultSessionName, listSessions, quitSession, SessionError } from "./mux/session/sessions.ts";
 
@@ -53,6 +53,9 @@ Usage:
   qmux hook
       Claude Code hook: reads the hook's JSON on stdin and reports the agent's state to qmux.
       Permission requests become a popup in the agent's tab. Does nothing outside qmux.
+  qmux hook --wake
+      Claude Code Stop hook to run with asyncRewake: waits until a form this pane opened is answered
+      or dismissed, then exits 2 with the answer so Claude wakes up and reads it.
 
 Results are JSON: {"status":"submitted","values":{...}}, {"status":"cancelled"}, or {"status":"pending"}.`;
 
@@ -76,7 +79,7 @@ async function main(argv: string[]): Promise<void> {
     case "mcp":
       return (await import("./mcp/server.ts")).serveStdio();
     case "hook":
-      return hookCommand();
+      return rest[0] === "--wake" ? wakeCommand() : hookCommand();
     case undefined:
       return (await import("./mux/session/client.ts")).attachSession(defaultSessionName);
     case "attach":
@@ -188,6 +191,17 @@ async function hookCommand(): Promise<void> {
     console.error(`qmux hook: ${(error as Error).message}`);
   }
   process.exit(0);
+}
+
+async function wakeCommand(): Promise<void> {
+  let input = {};
+  try {
+    input = JSON.parse(await Bun.stdin.text());
+  } catch {}
+  const notice = await waitForAnswers(process.env, input).catch(() => undefined);
+  if (!notice) process.exit(0);
+  console.error(notice);
+  process.exit(2);
 }
 
 async function projectCommand(args: string[]): Promise<void> {

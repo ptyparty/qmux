@@ -15,6 +15,8 @@ export class MuxView {
   private readonly modeBar: TextRenderable;
   private readonly trayBar: TextRenderable;
   private trayRanges: { start: number; end: number; index: number }[] = [];
+  private readonly jobsBar: TextRenderable;
+  private jobRanges: { start: number; end: number; id: PaneId }[] = [];
   private readonly hintBar: TextRenderable;
   private readonly overlay: BoxRenderable;
   private bodySignature = "";
@@ -46,7 +48,14 @@ export class MuxView {
       const hit = this.trayRanges.find((range) => offset >= range.start && offset < range.end);
       if (hit) this.actions.onOpenWidget(hit.index);
     };
+    this.jobsBar = new TextRenderable(renderer, { height: 1, flexShrink: 0, wrapMode: "none", bg: theme.surface });
+    this.jobsBar.onMouseDown = (event) => {
+      const offset = event.x - this.jobsBar.screenX;
+      const hit = this.jobRanges.find((range) => offset >= range.start && offset < range.end);
+      if (hit) this.actions.onOpenJob(hit.id);
+    };
     statusRow.add(this.modeBar);
+    statusRow.add(this.jobsBar);
     statusRow.add(this.trayBar);
     this.hintBar = new TextRenderable(renderer, { height: 1, fg: theme.muted });
     this.dock = new TextRenderable(renderer, { flexShrink: 0, wrapMode: "none", visible: false });
@@ -109,6 +118,7 @@ export class MuxView {
     this.tabBar.content = this.renderTabs();
     this.modeBar.content = this.renderModes();
     this.trayBar.content = this.renderTray();
+    this.jobsBar.content = this.renderJobChips(plainWidth(this.modeBar.content) + plainWidth(this.trayBar.content));
     this.hintBar.content = this.renderHints();
     this.launcher.render(this.workspace.prompt);
     const showJobs = this.workspace.mode === "jobs" && !this.workspace.prompt;
@@ -306,6 +316,35 @@ export class MuxView {
     return styled(parts);
   }
 
+  private renderJobChips(used: number): StyledText {
+    this.jobRanges = [];
+    const jobs = this.workspace.tabJobs().filter((job) => !job.dock);
+    const room = this.renderer.width - used - 2;
+    if (jobs.length === 0 || room < 4) return styled([]);
+    const chips = jobs.map((job) => {
+      const state = job.agent ? this.workspace.agents.get(job.id) : undefined;
+      const badge = job.agent ? (state ? agentBadges[state] : "🧠") : jobBadge(job);
+      const color = state ? agentColors[state] : job.state === "running" ? theme.text : commandColors[job.state];
+      return { id: job.id, badge, name: job.name, color };
+    });
+    for (const nameWidth of [Number.POSITIVE_INFINITY, 16, 10, 6]) {
+      const labels = chips.map((chip) => ` ${chip.badge} ${nameWidth === Number.POSITIVE_INFINITY ? chip.name : fit(chip.name, nameWidth)} `);
+      if (labels.reduce((total, label) => total + Bun.stringWidth(label), 0) > room) continue;
+      let column = 0;
+      return styled(
+        labels.map((label, index) => {
+          this.jobRanges.push({ start: column, end: column + Bun.stringWidth(label), id: chips[index]!.id });
+          column += Bun.stringWidth(label);
+          return fg(chips[index]!.color)(label);
+        }),
+      );
+    }
+    const counts = new Map<string, { count: number; color: string }>();
+    for (const chip of chips) counts.set(chip.badge, { count: (counts.get(chip.badge)?.count ?? 0) + 1, color: chip.color });
+    const summary = [...counts].map(([badge, { count, color }]) => fg(color)(` ${badge}${count}`));
+    return summary.length * 4 <= room ? styled([...summary, " "]) : styled([]);
+  }
+
   private renderTray(): StyledText {
     const selecting = this.workspace.mode === "tray";
     const parts: Part[] = [];
@@ -380,4 +419,8 @@ function fit(text: string, width: number, pad = false): string {
     cut += char;
   }
   return `${cut}…${pad ? " ".repeat(Math.max(width - 1 - Bun.stringWidth(cut), 0)) : ""}`;
+}
+
+function plainWidth(text: StyledText | string): number {
+  return Bun.stringWidth(typeof text === "string" ? text : text.chunks.map((chunk) => chunk.text).join(""));
 }

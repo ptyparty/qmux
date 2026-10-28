@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { ControlError, sendControl } from "../mux/control.ts";
 import { theme } from "../mux/theme.ts";
 import { decidePermission } from "./permissions.ts";
-import { pickSession } from "./picker.ts";
+import { declineHooks, defaultHookCommand, hooksDeclined, installHooks, missingHooks, readSettings, settingsPaths, writeSettings } from "./hooks-setup.ts";
+import { pick } from "./picker.ts";
 import { pastSessions, pickerItems, projectDir, runningSessions, sessionIds, type Choice, type LiveSession } from "./sessions.ts";
 import { ClaudeSession } from "./session.ts";
 import { ClaudeView, composeKeyBindings } from "./view.ts";
@@ -13,6 +14,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
   let choice: Choice | undefined = { kind: "new" };
   try {
+    if (process.env.QMUX_SOCKET) await offerHooks(renderer);
     if (options.pick) choice = await chooseSession(renderer);
     if (choice?.kind === "focus" && !(await focusPane(choice.paneId))) choice = { kind: "resume", sessionId: choice.sessionId };
   } catch (error) {
@@ -56,6 +58,28 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   if (id) console.log(`Continue this conversation with: claude --resume ${id}`);
 }
 
+async function offerHooks(renderer: CliRenderer): Promise<void> {
+  if (await hooksDeclined()) return;
+  const paths = settingsPaths();
+  let settings, local;
+  try {
+    [settings, local] = await Promise.all([readSettings(paths.user), readSettings(paths.local)]);
+  } catch {
+    return;
+  }
+  const missing = missingHooks([settings, local]);
+  if (missing.length === 0) return;
+  const answer = await pick(renderer, "qmux hooks", `${missing.length} missing or out of date in ${paths.user}`, [
+    { label: "Install them", detail: missing.map((hook) => hook.label).join(" · "), value: "install" },
+    { label: "Not now", detail: "ask again next time", value: "later" },
+    { label: "Don't ask again", detail: "`qmux hooks --install` installs them any time", value: "never" },
+  ]);
+  try {
+    if (answer === "install") await writeSettings(paths.user, installHooks(settings, [local], defaultHookCommand()));
+    if (answer === "never") await declineHooks();
+  } catch {}
+}
+
 async function chooseSession(renderer: CliRenderer): Promise<Choice | undefined> {
   const cwd = process.cwd();
   const dir = projectDir(cwd);
@@ -64,7 +88,7 @@ async function chooseSession(renderer: CliRenderer): Promise<Choice | undefined>
   const [past, running, live] = await Promise.all([pastSessions(dir, 8), runningSessions(cwd), liveSessions()]);
   const items = pickerItems({ live, running, past, known, now: Date.now() });
   if (items.length === 1) return items[0]!.choice;
-  return pickSession(renderer, cwd, items);
+  return pick(renderer, "Claude", cwd, items.map((item) => ({ label: item.label, detail: item.detail, value: item.choice })));
 }
 
 async function liveSessions(): Promise<LiveSession[]> {

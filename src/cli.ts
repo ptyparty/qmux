@@ -53,6 +53,8 @@ Usage:
   qmux hook
       Claude Code hook: reads the hook's JSON on stdin and reports the agent's state to qmux.
       Permission requests become a popup in the agent's tab. Does nothing outside qmux.
+  qmux hooks [--install]
+      List the Claude Code hooks qmux needs that are missing from your settings, or add them.
   qmux hook --wake
       Claude Code Stop hook to run with asyncRewake: waits until a form this pane opened is answered
       or dismissed, then exits 2 with the answer so Claude wakes up and reads it.
@@ -78,6 +80,8 @@ async function main(argv: string[]): Promise<void> {
       return print(z.toJSONSchema(formSpec));
     case "mcp":
       return (await import("./mcp/server.ts")).serveStdio();
+    case "hooks":
+      return hooksCommand(rest);
     case "hook":
       return rest[0] === "--wake" ? wakeCommand() : hookCommand();
     case undefined:
@@ -191,6 +195,22 @@ async function hookCommand(): Promise<void> {
     console.error(`qmux hook: ${(error as Error).message}`);
   }
   process.exit(0);
+}
+
+async function hooksCommand(args: string[]): Promise<void> {
+  const { values } = parse(args, { install: { type: "boolean" } });
+  const setup = await import("./claude/hooks-setup.ts");
+  const { user: path, local: localPath } = setup.settingsPaths();
+  const [settings, local] = await Promise.all([setup.readSettings(path), setup.readSettings(localPath)]);
+  const missing = setup.missingHooks([settings, local]);
+  if (missing.length === 0) return console.log(`qmux hooks are up to date in ${path}`);
+  if (!values.install) {
+    console.log(`Missing or out of date in ${path}:`);
+    for (const hook of missing) console.log(`  ${hook.label}: ${hook.why}`);
+    return console.log("Run `qmux hooks --install` to add them.");
+  }
+  const backup = await setup.writeSettings(path, setup.installHooks(settings, [local], setup.defaultHookCommand()));
+  console.log(`Installed ${missing.length} qmux hooks in ${path}${backup ? `; the old file is at ${backup}` : ""}`);
 }
 
 async function wakeCommand(): Promise<void> {

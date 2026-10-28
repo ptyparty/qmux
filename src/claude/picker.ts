@@ -1,13 +1,13 @@
 import { BoxRenderable, SelectRenderable, SelectRenderableEvents, TextRenderable, bold, fg, type CliRenderer, type KeyEvent } from "@opentui/core";
 import { theme } from "../mux/theme.ts";
 import { styled } from "../ui/styled.ts";
-import type { Choice, PickerItem } from "./sessions.ts";
+export type Option<T> = { label: string; detail: string; value: T };
 
-export function pickSession(renderer: CliRenderer, cwd: string, items: PickerItem[]): Promise<Choice | undefined> {
+export function pick<T>(renderer: CliRenderer, title: string, subtitle: string, items: Option<T>[]): Promise<T | undefined> {
   const root = new BoxRenderable(renderer, { flexDirection: "column", width: "100%", height: "100%", backgroundColor: theme.background, padding: 1 });
   const heading = new TextRenderable(renderer, {
     height: 2,
-    content: styled([bold(fg(theme.accent)("Claude")), fg(theme.muted)(`  ${cwd}\n↑↓ choose · Enter open · Esc quit`)]),
+    content: styled([bold(fg(theme.accent)(title)), fg(theme.muted)(`  ${subtitle}\n↑↓ choose · Enter pick · Esc quit`)]),
   });
   const select = new SelectRenderable(renderer, {
     flexGrow: 1,
@@ -30,7 +30,7 @@ export function pickSession(renderer: CliRenderer, cwd: string, items: PickerIte
   select.focus();
   renderer.requestRender();
   return new Promise((resolve) => {
-    const finish = (choice: Choice | undefined) => {
+    const finish = (choice: T | undefined) => {
       renderer.keyInput.off("keypress", onKey);
       renderer.root.remove(root);
       root.destroyRecursively();
@@ -43,6 +43,6 @@ export function pickSession(renderer: CliRenderer, cwd: string, items: PickerIte
       }
     };
     renderer.keyInput.on("keypress", onKey);
-    select.on(SelectRenderableEvents.ITEM_SELECTED, (index: number) => finish(items[index]?.choice));
+    select.on(SelectRenderableEvents.ITEM_SELECTED, (index: number) => finish(items[index]?.value));
   });
 }

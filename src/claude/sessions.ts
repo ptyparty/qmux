@@ -13,7 +13,11 @@ export type Choice =
 
 export type PickerItem = { label: string; detail: string; choice: Choice };
 
-export function projectDir(cwd: string, configDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude")): string {
+export function claudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+}
+
+export function projectDir(cwd: string, configDir = claudeConfigDir()): string {
   return join(configDir, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
 }
 

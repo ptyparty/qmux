@@ -9,7 +9,7 @@ export const controlRequest = z.discriminatedUnion("method", [
   z.object({ method: z.literal("project.open"), params: z.object({ target: z.string().min(1) }) }),
   z.object({
     method: z.literal("agent.state"),
-    params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional(), sessionId: z.string().min(1).optional() }),
+    params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional(), sessionId: z.string().min(1).optional(), reply: z.string().optional() }),
   }),
   z.object({
     method: z.literal("pane.open"),

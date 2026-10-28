@@ -91,6 +91,10 @@ export class Pane {
     return renderable === this.view;
   }
 
+  get code(): number | null | undefined {
+    return this.exitCode;
+  }
+
   get exited(): boolean {
     return this.exitCode !== undefined;
   }

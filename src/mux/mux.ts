@@ -1,6 +1,6 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { randomBytes } from "node:crypto";
-import { closeSync, ftruncateSync, openSync, writeSync } from "node:fs";
+import { closeSync, ftruncateSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { ensurePrivateDir, runtimeDir } from "../private-dir.ts";
 import type { Config } from "./config.ts";
@@ -188,6 +188,13 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     },
     runningCommand: (id) => runningCommands.get(id)?.commandLine,
     shellCommand: (text) => [process.env.SHELL ?? "/bin/sh", "-c", text],
+    peekReply: (near, title, text) => {
+      const tabId = workspace.tabOf(near)?.id;
+      if (tabId === undefined) return;
+      const spec = join(services.tabDir(tabId), "peek.json");
+      writeFileSync(spec, JSON.stringify({ title, elements: [{ type: "markdown", text }], submitLabel: "Done" }));
+      openViewPopup(near, [...selfCommand(), "form", spec], title, { width: 80, height: 80 });
+    },
     composeClaude: (near, candidates) => {
       const target = nativeClaudes.has(near) ? near : candidates.find((id) => nativeClaudes.has(id));
       if (target === undefined) return "No native Claude in this tab";
@@ -322,7 +329,8 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
         case "pane.focus": {
           const { paneId, closing } = request.params;
           if (!workspace.tabOf(paneId)) return { ok: false, error: `no pane ${paneId}` };
-          workspace.focusPane(paneId);
+          if (workspace.jobStatus(paneId)) workspace.openJob(paneId);
+          else workspace.focusPane(paneId);
           if (closing !== undefined && closing !== paneId)
             setTimeout(() => {
               destroyPane(closing);
@@ -333,9 +341,9 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return { ok: true };
         }
         case "agent.state": {
-          const { paneId, state, detail, sessionId } = request.params;
+          const { paneId, state, detail, sessionId, reply } = request.params;
           if (sessionId) trackSession(paneId, sessionId, state === "clear");
-          const notify = workspace.setAgentState(paneId, state === "clear" ? undefined : state);
+          const notify = workspace.setAgentState(paneId, state === "clear" ? undefined : state, reply);
           if (notify) {
             const where = workspace.tabOf(paneId)?.name ?? "qmux";
             renderer.triggerNotification(detail ?? (state === "waiting" ? "An agent needs you" : "An agent finished"), where);
@@ -366,7 +374,12 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
         }
         case "job.status": {
           const job = workspace.jobStatus(request.params.jobId);
-          if (!job && panes.has(request.params.jobId)) return { ok: true, result: { state: "running", code: null } };
+          const promoted = job ? undefined : panes.get(request.params.jobId);
+          if (promoted) {
+            const code = promoted.code;
+            const state = code === undefined ? "running" : code === 0 ? "succeeded" : "failed";
+            return { ok: true, result: { state, code: code ?? null } };
+          }
           if (!job) return { ok: false, error: `job ${request.params.jobId} was closed` };
           return { ok: true, result: { state: job.state, code: job.code ?? null } };
         }

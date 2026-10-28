@@ -22,6 +22,7 @@ export type Command =
   | { type: "close-popup" }
   | { type: "next-attention" }
   | { type: "compose-claude" }
+  | { type: "peek-reply" }
   | { type: "last-tab" }
   | { type: "select-widget"; delta: number }
   | { type: "open-widget" }
@@ -73,12 +74,14 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["alt+e"], command: { type: "cycle-pane", delta: 1 } },
       { keys: ["alt+a"], command: { type: "next-attention" } },
       { keys: ["alt+c"], command: { type: "compose-claude" } },
+      { keys: ["alt+p"], command: { type: "peek-reply" } },
     ],
     hints: [
       { keys: "Alt h/t/n/s", description: "focus" },
       { keys: "Alt o/e", description: "prev/next pane" },
       { keys: "Alt a", description: "next agent needing you" },
       { keys: "Alt c", description: "message Claude" },
+      { keys: "Alt p", description: "peek at a reply" },
     ],
   },
   locked: {

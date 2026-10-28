@@ -23,7 +23,7 @@ export class MuxView {
   private readonly jobsPanel: JobsPanel;
   private readonly toastBox: BoxRenderable;
   private readonly toastText: TextRenderable;
-  private toastJobs: PaneId[] = [];
+  private toastTargets: PaneId[] = [];
   private overlayPane: PaneId | undefined;
 
   constructor(
@@ -77,8 +77,10 @@ export class MuxView {
     });
     this.toastText = new TextRenderable(renderer, { wrapMode: "none" });
     this.toastText.onMouseDown = (event) => {
-      const id = this.toastJobs[event.y - this.toastText.screenY];
-      if (id !== undefined) this.actions.onOpenJob(id);
+      const id = this.toastTargets[event.y - this.toastText.screenY];
+      if (id === undefined) return;
+      if (this.workspace.jobStatus(id)) this.actions.onOpenJob(id);
+      else this.actions.onFocusPane(id);
     };
     this.toastBox.add(this.toastText);
     renderer.root.add(this.toastBox);
@@ -109,10 +111,15 @@ export class MuxView {
   private renderToasts(): void {
     const toasts = this.workspace.toasts();
     this.toastBox.visible = toasts.length > 0;
-    this.toastJobs = toasts.map(({ job }) => job.id);
+    this.toastTargets = toasts.map((toast) => (toast.kind === "job" ? toast.job.id : toast.id));
     if (toasts.length === 0) return;
-    const lines = toasts.map(({ job, tab }) => {
-      const where = tab === this.workspace.tab ? "" : ` · ${tab.name}`;
+    const lines = toasts.map((toast) => {
+      const where = toast.tab === this.workspace.tab ? "" : ` · ${toast.tab.name}`;
+      if (toast.kind === "reply") {
+        const name = this.workspace.paneNames.get(toast.id) ?? "Claude";
+        return { text: `💬 ${name}${where} · ${firstLine(toast.reply.text, 60)} · Alt p`, color: theme.accent };
+      }
+      const { job } = toast;
       const open = job.state === "failed" ? " · Alt a" : "";
       return { text: `${jobBadge(job)} ${job.name} · ${jobDetail(job, Date.now())}${where}${open}`, color: job.state === "failed" ? commandColors.failed : commandColors.succeeded };
     });
@@ -243,6 +250,7 @@ export class MuxView {
       parts.push(paint(` ${index + 1} ${tab.name}${asking}`, theme.muted));
       const command = this.workspace.tabCommandState(tab);
       if (attention) parts.push(paint(` ${agentBadges[attention]}`, agentColors[attention]));
+      if (this.workspace.tabUnread(tab)) parts.push(paint(" 💬", theme.accent));
       const failed = command === "failed" || this.workspace.failedServices.has(tab.id) ? "failed" : command;
       if (failed) parts.push(paint(` ${commandBadges[failed]}`, commandColors[failed]));
       parts.push(paint(" ", theme.muted), " ");
@@ -323,4 +331,9 @@ function hintParts(mode: Mode, list: Hint[] = hints(mode)): Part[] {
     parts.push(bold(fg(theme.accent)(hint.keys)), fg(theme.muted)(` ${hint.description}`));
   });
   return parts;
+}
+
+function firstLine(text: string, max: number): string {
+  const line = text.split("\n").find((candidate) => candidate.trim())?.replace(/[*_`#>]/g, "").trim() ?? "";
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }

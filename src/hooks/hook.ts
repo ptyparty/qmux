@@ -5,17 +5,23 @@ import type { FormSpec } from "../form/schema.ts";
 import { ControlError, sendControl, type ControlRequest } from "../mux/control.ts";
 import { attachedPaneEnv } from "./attached.ts";
 
-export type HookInput = { hook_event_name?: string; message?: string; notification_type?: string; [key: string]: unknown };
+export type HookInput = { hook_event_name?: string; message?: string; notification_type?: string; last_assistant_message?: unknown; [key: string]: unknown };
 
 type AgentStateRequest = Extract<ControlRequest, { method: "agent.state" }>;
 type AgentStateName = AgentStateRequest["params"]["state"];
 
-export function stateForEvent(input: HookInput): { state: AgentStateName; detail?: string } | undefined {
+type StateUpdate = { state: AgentStateName; detail?: string; reply?: string; sessionId?: string };
+
+const maxReply = 8000;
+
+export function stateForEvent(input: HookInput): StateUpdate | undefined {
   switch (input.hook_event_name) {
     case "UserPromptSubmit":
       return { state: "working" };
-    case "Stop":
-      return { state: "done" };
+    case "Stop": {
+      const reply = typeof input.last_assistant_message === "string" && input.last_assistant_message.trim() ? input.last_assistant_message.slice(0, maxReply) : undefined;
+      return { state: "done", reply };
+    }
     case "SessionEnd":
       return { state: "clear" };
     case "Notification": {
@@ -216,7 +222,7 @@ function runsAsJob(command: unknown, self: string[]): boolean {
 }
 
 async function askInPopup(pane: AskOwner, spec: FormSpec, waitingFor: string): Promise<AskStatus | undefined> {
-  await reportState(pane, "waiting", waitingFor);
+  await reportState(pane, "waiting", { detail: waitingFor });
   let outcome;
   try {
     outcome = await ask(new AskStore(), spec, "qmux", Number.POSITIVE_INFINITY, {});
@@ -271,7 +277,7 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     return answer ? JSON.stringify(answer) : undefined;
   }
   const update = stateForEvent(input);
-  if (update) await reportState(pane, update.state, update.detail, session);
+  if (update) await reportState(pane, update.state, { ...update, sessionId: session });
   if (input.hook_event_name === "UserPromptSubmit") {
     const notice = unseenNotice(await new AskStore().claimUnseen(pane));
     return notice && JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: notice } });
@@ -314,9 +320,10 @@ async function reportSession(pane: AskOwner, sessionId: string): Promise<void> {
   }
 }
 
-export async function reportState(pane: AskOwner, state: AgentStateName, detail?: string, sessionId?: string): Promise<void> {
+export async function reportState(pane: AskOwner, state: AgentStateName, update: Omit<StateUpdate, "state"> = {}): Promise<void> {
+  const { detail, sessionId, reply } = update;
   try {
-    await sendControl(pane.socket, { method: "agent.state", params: { paneId: pane.paneId, state, detail, sessionId } }, 1000);
+    await sendControl(pane.socket, { method: "agent.state", params: { paneId: pane.paneId, state, detail, sessionId, reply } }, 1000);
   } catch (error) {
     if (!(error instanceof ControlError)) throw error;
   }

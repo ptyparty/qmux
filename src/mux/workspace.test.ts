@@ -41,6 +41,10 @@ class FakeHost implements PaneHost {
   }
   claudes = new Set<number>();
   composed: number[] = [];
+  peeked: [number, string, string][] = [];
+  peekReply(near: number, title: string, text: string): void {
+    this.peeked.push([near, title, text]);
+  }
   composeClaude(near: number, candidates: number[]): string | undefined {
     const target = this.claudes.has(near) ? near : candidates.find((id) => this.claudes.has(id));
     if (target === undefined) return "No native Claude in this tab";
@@ -767,7 +771,7 @@ describe("Workspace", () => {
       const id = workspace.runJob(2, ["true"])!;
       clock.now = 3000;
       workspace.jobFinished(id, 0);
-      expect(workspace.toasts().map((toast) => toast.job.state)).toEqual(["succeeded"]);
+      expect(workspace.toasts()).toMatchObject([{ kind: "job", job: { state: "succeeded" } }]);
       expect(workspace.nextToastExpiry()).toBe(5000);
       expect(workspace.tabCommandState(workspace.tab)).toBeUndefined();
       clock.now = 8000;
@@ -782,7 +786,7 @@ describe("Workspace", () => {
       press(workspace, "ctrl+t", "c");
       workspace.jobFinished(id, 2);
       clock.now = 60_000;
-      expect(workspace.toasts().map((toast) => [toast.job.name, toast.tab.name])).toEqual([["build", "merlin"]]);
+      expect(workspace.toasts()).toMatchObject([{ kind: "job", job: { name: "build" }, tab: { name: "merlin" } }]);
       expect(workspace.tabCommandState(workspace.tabs[1]!)).toBe("failed");
       press(workspace, "alt+a");
       expect(workspace.tab.name).toBe("merlin");
@@ -922,6 +926,27 @@ describe("Workspace", () => {
       workspace.paneExited(4);
       expect(host.destroyed).toContain(id);
       expect(workspace.jobs).toEqual([]);
+    });
+
+    test("an agent's reply is unread until its pane is seen or peeked at", () => {
+      const { host, workspace } = ide({ now: 5 });
+      const agent = workspace.tab.focused;
+      workspace.setAgentState(agent, "done", "Seen as it came");
+      expect(workspace.toasts()).toEqual([]);
+      press(workspace, "alt+s");
+      workspace.setAgentState(agent, "done", "**Built** it\nmore");
+      expect(workspace.tabUnread(workspace.tab)).toBe(true);
+      expect(workspace.toasts()).toMatchObject([{ kind: "reply", id: agent, reply: { text: "**Built** it\nmore" } }]);
+      press(workspace, "alt+p");
+      expect(host.peeked).toEqual([[agent, "Claude · merlin", "**Built** it\nmore"]]);
+      expect(workspace.toasts()).toEqual([]);
+      expect(workspace.agents.has(agent)).toBe(false);
+      workspace.setAgentState(agent, "done", "Again");
+      press(workspace, "alt+h");
+      expect(workspace.tabUnread(workspace.tab)).toBe(false);
+      const empty = new Workspace(new FakeHost());
+      press(empty, "alt+p");
+      expect(empty.message).toBe("No agent reply to show");
     });
 
     test("closing the last tab with several jobs closes them all", () => {

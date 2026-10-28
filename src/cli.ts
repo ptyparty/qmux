@@ -274,8 +274,10 @@ async function jobCommand(args: string[]): Promise<void> {
   const output = new JobOutput(log);
   for (;;) {
     const status = (await control({ method: "job.status", params: { jobId } })) as { state: string; code: number | null };
-    await output.drain(status.state !== "running");
-    if (status.state !== "running") process.exit(status.code ?? 1);
+    const finished = status.state !== "running";
+    if (finished) await Bun.sleep(300);
+    await output.drain(finished);
+    if (finished) process.exit(status.code ?? 1);
     await Bun.sleep(300);
   }
 }

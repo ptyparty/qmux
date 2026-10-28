@@ -10,7 +10,8 @@ export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "v
 
 export type JobState = "running" | "succeeded" | "failed";
 export type Job = { id: PaneId; tabId: number; name: string; command?: string[]; state: JobState; code?: number | null; started: number; finished?: number; seen: boolean; agent?: boolean };
-export type Toast = { job: Job; tab: Tab };
+export type Reply = { text: string; at: number; unread: boolean };
+export type Toast = { kind: "job"; job: Job; tab: Tab } | { kind: "reply"; id: PaneId; reply: Reply; tab: Tab };
 
 export const agentStates = ["working", "waiting", "done", "failed"] as const;
 export type AgentState = (typeof agentStates)[number];
@@ -43,6 +44,7 @@ export interface PaneHost {
   runningCommand(id: PaneId): string | undefined;
   shellCommand(text: string): string[];
   composeClaude(near: PaneId, candidates: PaneId[]): string | undefined;
+  peekReply(near: PaneId, title: string, text: string): void;
   startServices(tabId: number, services: ServiceSpec[], cwd: string | undefined): void;
   stopServices(tabId: number): void;
   projects(): Project[];
@@ -75,6 +77,7 @@ export class Workspace {
   readonly paneNames = new Map<PaneId, string>();
   readonly popups: Popup[] = [];
   readonly agents = new Map<PaneId, AgentState>();
+  readonly replies = new Map<PaneId, Reply>();
   readonly commands = new Map<PaneId, CommandState>();
   readonly failedServices = new Map<number, string>();
   readonly jobs: Job[] = [];
@@ -178,7 +181,7 @@ export class Workspace {
     }
   }
 
-  setAgentState(id: PaneId, state: AgentState | undefined): boolean {
+  setAgentState(id: PaneId, state: AgentState | undefined, reply?: string): boolean {
     if (!this.tabOf(id)) return false;
     if (state === undefined) {
       this.agents.delete(id);
@@ -186,6 +189,7 @@ export class Workspace {
     }
     this.markAgent(id);
     const watching = id === this.tab.focused || this.popup?.id === id;
+    if (reply !== undefined) this.replies.set(id, { text: reply, at: this.now(), unread: !watching });
     const changed = this.agents.get(id) !== state;
     this.agents.set(id, state);
     return changed && !watching && state !== "working";
@@ -211,18 +215,31 @@ export class Workspace {
 
   toasts(): Toast[] {
     const now = this.now();
-    return this.jobs.flatMap((job) => {
+    const jobs = this.jobs.flatMap((job): Toast[] => {
       const tab = this.tabs.find((candidate) => candidate.id === job.tabId);
       if (!tab || job.seen || job.state === "running") return [];
       if (job.state === "succeeded" && now - job.finished! >= toastMs) return [];
-      return [{ job, tab }];
+      return [{ kind: "job", job, tab }];
     });
+    const replies = [...this.replies].flatMap(([id, reply]): Toast[] => {
+      const tab = this.tabOf(id);
+      return tab && reply.unread ? [{ kind: "reply", id, reply, tab }] : [];
+    });
+    return [...jobs, ...replies];
+  }
+
+  tabUnread(tab: Tab): boolean {
+    return this.tabPanes(tab).some((id) => this.replies.get(id)?.unread);
+  }
+
+  seeReply(id: PaneId): void {
+    const reply = this.replies.get(id);
+    if (reply) reply.unread = false;
   }
 
   nextToastExpiry(): number | undefined {
     const left = this.toasts()
-      .filter(({ job }) => job.state === "succeeded")
-      .map(({ job }) => job.finished! + toastMs - this.now());
+      .flatMap((toast) => (toast.kind === "job" && toast.job.state === "succeeded" ? [toast.job.finished! + toastMs - this.now()] : []));
     return left.length > 0 ? Math.max(Math.min(...left), 0) : undefined;
   }
 
@@ -271,6 +288,7 @@ export class Workspace {
     this.popupExited(id);
     this.paneNames.delete(id);
     this.agents.delete(id);
+    this.replies.delete(id);
     this.commands.delete(id);
     this.selectedJob = Math.max(Math.min(this.selectedJob, this.tabJobs().length - 1), 0);
   }
@@ -391,9 +409,28 @@ export class Workspace {
   private dispatchKey(key: InputKey): boolean {
     this.message = undefined;
     const consumed = this.routeKey(key);
+    const shown = this.popup?.kind === "job" ? this.popup.id : this.popup ? undefined : this.tabs[this.active]?.focused;
+    if (shown !== undefined) this.seeReply(shown);
     if (!consumed && !this.popup) this.acknowledge(this.tab.focused);
     else if (!consumed && this.popup?.kind === "job") this.acknowledge(this.popup.id);
     return consumed;
+  }
+
+  private peekReply(): void {
+    const replies = [...this.replies].filter(([id]) => this.tabOf(id));
+    const newest = (candidates: typeof replies) => candidates.sort(([, a], [, b]) => b.at - a.at)[0];
+    const target =
+      replies.find(([id]) => id === this.tab.focused) ??
+      newest(replies.filter(([, reply]) => reply.unread)) ??
+      newest(replies.filter(([id]) => this.tabOf(id) === this.tab));
+    if (!target) {
+      this.message = "No agent reply to show";
+      return;
+    }
+    const [id, reply] = target;
+    this.host.peekReply(id, `${this.paneNames.get(id) ?? "Claude"} · ${this.tabOf(id)!.name}`, reply.text);
+    reply.unread = false;
+    this.acknowledge(id);
   }
 
   private acknowledge(id: PaneId): void {
@@ -466,6 +503,7 @@ export class Workspace {
     if (index < 0) return;
     this.active = index;
     this.tab.focused = id;
+    this.seeReply(id);
     this.selectFocusedTabs();
   }
 
@@ -534,6 +572,7 @@ export class Workspace {
     if (index < 0) return;
     this.paneNames.delete(id);
     this.agents.delete(id);
+    this.replies.delete(id);
     this.commands.delete(id);
     const tab = this.tabs[index]!;
     const sibling = paneTabSibling(tab.root, id);
@@ -606,6 +645,8 @@ export class Workspace {
         return;
       case "next-attention":
         return this.jumpToAttention();
+      case "peek-reply":
+        return this.peekReply();
       case "compose-claude":
         this.message = this.host.composeClaude(this.tab.focused, this.tabPanes(this.tab));
         return;

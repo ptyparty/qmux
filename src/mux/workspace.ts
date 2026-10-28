@@ -62,7 +62,7 @@ export interface PaneHost {
 export type InputKey = Key & { sequence: string };
 
 const popupPassthrough = new Set(["ctrl+t", "ctrl+o"]);
-const jobPopupPassthrough = new Set([...popupPassthrough, "ctrl+s"]);
+const jobPopupPassthrough = new Set([...popupPassthrough, "ctrl+s", "alt+j"]);
 
 export class Workspace {
   tabs: Tab[] = [];
@@ -78,6 +78,8 @@ export class Workspace {
   readonly popups: Popup[] = [];
   readonly agents = new Map<PaneId, AgentState>();
   readonly replies = new Map<PaneId, Reply>();
+  private readonly hideOnReply = new Set<PaneId>();
+  private lastJob: PaneId | undefined;
   readonly commands = new Map<PaneId, CommandState>();
   readonly failedServices = new Map<number, string>();
   readonly jobs: Job[] = [];
@@ -161,6 +163,7 @@ export class Workspace {
     const index = this.popups.findIndex((popup) => popup.id === id);
     if (index >= 0) this.popups.splice(index, 1);
     this.shownPopups.delete(id);
+    this.hideOnReply.delete(id);
   }
 
   handleKey(key: InputKey): boolean {
@@ -188,6 +191,7 @@ export class Workspace {
       return false;
     }
     this.markAgent(id);
+    if (state === "working" && this.hideOnReply.has(id)) this.popupExited(id);
     const watching = id === this.tab.focused || this.popup?.id === id;
     if (reply !== undefined) this.replies.set(id, { text: reply, at: this.now(), unread: !watching });
     const changed = this.agents.get(id) !== state;
@@ -273,6 +277,7 @@ export class Workspace {
     if (!job || index < 0) return;
     this.active = index;
     if (!this.popups.some((popup) => popup.id === id)) this.popups.push({ id, title: job.name, tabId: job.tabId, kind: "job" });
+    this.lastJob = id;
     if (job.state !== "running") job.seen = true;
     this.acknowledge(id);
   }
@@ -402,7 +407,10 @@ export class Workspace {
     }
     this.active = done.index;
     if (!this.jobStatus(done.id)) this.tab.focused = done.id;
-    else if (!asking.has(done.id)) this.openJob(done.id);
+    else if (!asking.has(done.id)) {
+      this.openJob(done.id);
+      if (this.jobStatus(done.id)?.agent) this.hideOnReply.add(done.id);
+    }
     this.lastKeyAt = Number.NEGATIVE_INFINITY;
   }
 
@@ -647,6 +655,13 @@ export class Workspace {
         return this.jumpToAttention();
       case "peek-reply":
         return this.peekReply();
+      case "toggle-job": {
+        const popup = this.popup;
+        if (popup?.kind === "job") return this.popupExited(popup.id);
+        if (this.lastJob !== undefined && this.jobStatus(this.lastJob)) return this.openJob(this.lastJob);
+        this.message = "No job to reopen";
+        return;
+      }
       case "compose-claude":
         this.message = this.host.composeClaude(this.tab.focused, this.tabPanes(this.tab));
         return;

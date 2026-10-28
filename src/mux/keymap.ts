@@ -23,6 +23,7 @@ export type Command =
   | { type: "next-attention" }
   | { type: "compose-claude" }
   | { type: "peek-reply" }
+  | { type: "toggle-job" }
   | { type: "last-tab" }
   | { type: "select-widget"; delta: number }
   | { type: "open-widget" }
@@ -75,6 +76,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["alt+a"], command: { type: "next-attention" } },
       { keys: ["alt+c"], command: { type: "compose-claude" } },
       { keys: ["alt+p"], command: { type: "peek-reply" } },
+      { keys: ["alt+j"], command: { type: "toggle-job" } },
     ],
     hints: [
       { keys: "Alt h/t/n/s", description: "focus" },
@@ -82,6 +84,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "Alt a", description: "next agent needing you" },
       { keys: "Alt c", description: "message Claude" },
       { keys: "Alt p", description: "peek at a reply" },
+      { keys: "Alt j", description: "hide or reopen a job" },
     ],
   },
   locked: {

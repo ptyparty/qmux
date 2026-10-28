@@ -928,6 +928,36 @@ describe("Workspace", () => {
       expect(workspace.jobs).toEqual([]);
     });
 
+    test("an agent job opened by Alt a hides once you reply and the agent gets back to work", () => {
+      const { workspace } = ide({ now: 0 });
+      const claude = workspace.runJob(2, ["qmux", "claude"], "claude")!;
+      workspace.setAgentState(claude, "done");
+      press(workspace, "alt+a");
+      expect(workspace.popup).toMatchObject({ id: claude, kind: "job" });
+      workspace.setAgentState(claude, "working");
+      expect(workspace.popup).toBeUndefined();
+      workspace.setAgentState(claude, "done");
+      press(workspace, "ctrl+s", "return");
+      workspace.setAgentState(claude, "working");
+      expect(workspace.popup).toMatchObject({ id: claude, kind: "job" });
+    });
+
+    test("Alt j hides the open job, running or finished, and reopens the last one", () => {
+      const { workspace } = ide({ now: 0 });
+      press(workspace, "alt+j");
+      expect(workspace.message).toBe("No job to reopen");
+      const job = workspace.runJob(2, ["make"])!;
+      press(workspace, "ctrl+s", "return");
+      expect(workspace.popup).toMatchObject({ id: job, kind: "job" });
+      press(workspace, "alt+j");
+      expect(workspace.popup).toBeUndefined();
+      press(workspace, "alt+j");
+      expect(workspace.popup).toMatchObject({ id: job, kind: "job" });
+      workspace.jobFinished(job, 1);
+      press(workspace, "alt+j");
+      expect(workspace.popup).toBeUndefined();
+    });
+
     test("an agent's reply is unread until its pane is seen or peeked at", () => {
       const { host, workspace } = ide({ now: 5 });
       const agent = workspace.tab.focused;

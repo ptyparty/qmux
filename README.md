@@ -83,7 +83,7 @@ A job is a command that runs out of sight in a tab, in a terminal of its own. Pr
 - **b** sends the focused pane to the background while it is busy with a long command. Its shell keeps running, and the job is done when that command finishes. This needs the fish integration that also drives the `⏳` badges.
 - **↑/↓** pick a job, **Enter** opens it over the tab, **h** hides it again, **r** re-runs it, **p** moves it into the layout as a pane, and **x** closes it, stopping it if it is still running.
 
-While a job runs, its tab shows `⏳`. A job that succeeds shows a toast for five seconds. A job that fails keeps its toast and puts `💥` on its tab until you open it; Alt a or a click on the toast opens it. A finished job's popup takes Enter to re-run, p to move into the layout, x to close, and Esc to hide. While a job runs, keys go to it, so Ctrl+c stops it.
+While a job runs, its tab shows `⏳`. A job that succeeds shows a toast for five seconds. A job that fails keeps its toast and puts `💥` on its tab until you open it; Alt a or a click on the toast opens it. A finished job's popup takes Enter to re-run, p to move into the layout, x to close, and Esc to hide. While a job runs, keys go to it, so Ctrl+c stops it. **Alt j** hides the open job, running or not, and with no job open reopens the last one you opened. A job running an agent that Alt a opened for you hides by itself once you reply and the agent is back at work.
 
 `qmux job run [--name NAME] [--wait] -- COMMAND...` runs a job in the tab of the pane it is called from. With `--wait` it prints the job's output, without colours, as it runs and exits with the job's exit code. That lets an agent run builds and tests that you can watch too, for example with this line in a `CLAUDE.md`:
 

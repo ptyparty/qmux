@@ -426,7 +426,7 @@ describe("Workspace", () => {
     expect(workspace.openPaneNear(99, "right", ["top"])).toBeUndefined();
   });
 
-  test("pane groups: new panes join the group, focus walks members left to right, s groups onto the focused pane", () => {
+  test("pane groups: focus moves leave a group's shown pane alone, cycling reaches every member, new panes join the group", () => {
     const config = configSchema.parse({
       projects: { layout: "ide" },
       layouts: { ide: { row: [{ focus: true }, { tabs: [{ command: ["remax"] }, {}] }] } },
@@ -435,14 +435,21 @@ describe("Workspace", () => {
     workspace.openProject("merlin");
     expect(workspace.tab.root).toMatchObject({ children: [{ id: 2 }, { kind: "tabs", panes: [3, 4], selected: 0 }] });
     press(workspace, "alt+s", "alt+s");
+    expect(workspace.tab.focused).toBe(3);
+    press(workspace, "alt+e");
     expect(workspace.tab.focused).toBe(4);
     expect(workspace.tab.root).toMatchObject({ children: [{}, { selected: 1 }] });
+    press(workspace, "alt+h");
+    expect(workspace.tab.focused).toBe(2);
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { selected: 1 }] });
+    press(workspace, "alt+s");
+    expect(workspace.tab.focused).toBe(4);
     press(workspace, "ctrl+p", "n");
     expect(workspace.tab.root).toMatchObject({ children: [{}, { panes: [3, 4, 5], selected: 2 }] });
-    press(workspace, "alt+h", "alt+h");
-    expect(workspace.tab.focused).toBe(3);
+    press(workspace, "alt+h", "ctrl+p", "n");
+    expect(workspace.tab.root).toMatchObject({ children: [{}, { panes: [3, 4, 5, 6], selected: 3 }] });
     press(workspace, "alt+h", "ctrl+p", "s");
-    expect(workspace.tab.root).toMatchObject({ children: [{ kind: "tabs", panes: [2, 6], selected: 1 }, {}] });
+    expect(workspace.tab.root).toMatchObject({ children: [{ kind: "tabs", panes: [2, 7], selected: 1 }, {}] });
   });
 
   test("the project launcher selects matches with the arrow keys", () => {
@@ -594,7 +601,7 @@ describe("Workspace", () => {
     const workspace = new Workspace(new FakeHost());
     press(workspace, "ctrl+p", "r", "ctrl+p", "s", "ctrl+p", "s");
     expect(workspace.tab.root).toMatchObject({ children: [{}, { kind: "tabs", panes: [2, 3, 4] }] });
-    press(workspace, "alt+h", "ctrl+p", "x");
+    press(workspace, "alt+o", "ctrl+p", "x");
     expect(workspace.tab.focused).toBe(4);
   });
 

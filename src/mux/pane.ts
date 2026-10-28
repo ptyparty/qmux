@@ -26,6 +26,7 @@ export type PaneOptions = {
   holdOnExit?: boolean;
   holdOnFailure?: boolean;
   frameless?: boolean;
+  scrollbackBytes?: number;
 };
 
 const resetTerminal = "\x1bc";
@@ -61,6 +62,7 @@ export class Pane {
       width: "100%",
       height: "100%",
       selectable: true,
+      maxScrollback: options.scrollbackBytes,
       onMouseDown: (event) => this.clicked(event),
       onData: (data) => this.pty.write(data),
       onTerminalResize: (cols, rows) => {

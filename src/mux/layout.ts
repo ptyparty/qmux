@@ -49,6 +49,10 @@ export function addToFirstTabs(root: LayoutNode, added: PaneId): LayoutNode | un
   return replaceNode(root, group, { kind: "tabs", panes: [...group.panes, added], selected: group.panes.length });
 }
 
+export function inPaneTabs(root: LayoutNode, target: PaneId): boolean {
+  return findTabs(root, (candidate) => candidate.panes.includes(target)) !== undefined;
+}
+
 export function selectPaneTab(root: LayoutNode, target: PaneId): LayoutNode {
   const group = findTabs(root, (candidate) => candidate.panes.includes(target));
   if (!group || group.panes[group.selected] === target) return root;
@@ -123,8 +127,7 @@ export function neighbor(root: LayoutNode, from: PaneId, direction: Direction): 
 }
 
 function groupRects(group: TabsNode, rect: Rect): Map<PaneId, Rect> {
-  const width = rect.width / group.panes.length;
-  return new Map(group.panes.map((id, index) => [id, { x: rect.x + index * width, y: rect.y, width, height: rect.height }]));
+  return new Map([[group.panes[group.selected]!, rect]]);
 }
 
 function findTabs(root: LayoutNode, matches: (group: TabsNode) => boolean): TabsNode | undefined {

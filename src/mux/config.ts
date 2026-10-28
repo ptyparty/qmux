@@ -47,6 +47,7 @@ export const configSchema = z
   .object({
     defaultCwd: z.string().optional().describe("Directory for new tabs; defaults to the focused pane's directory"),
     env: z.record(z.string(), z.string()).default({}).describe("Environment variables set in every pane, such as EDITOR"),
+    scrollback: z.number().positive().max(4000).default(50).describe("Megabytes of history each pane keeps; 50 is roughly 70,000 lines at 80 columns"),
     untrackedCommands: z.array(z.string()).default([]).describe("Programs that never get a long-running command badge, such as editors and agents"),
     layouts: z.record(z.string(), layoutEntry).default({}),
     tabs: z

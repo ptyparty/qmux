@@ -1,4 +1,4 @@
-import { addToFirstTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type LayoutEntry, type ServiceSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
@@ -49,7 +49,6 @@ export interface PaneHost {
 export type InputKey = Key & { sequence: string };
 
 const popupPassthrough = new Set(["ctrl+t", "ctrl+o"]);
-const shownMatches = 6;
 
 export class Workspace {
   tabs: Tab[] = [];
@@ -396,7 +395,7 @@ export class Workspace {
         return this.openTab(this.config.defaultCwd ? expandHome(this.config.defaultCwd) : this.host.cwd(this.tab.focused));
       case "open-project": {
         const candidates = this.projects();
-        this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates.slice(0, shownMatches), marked: [], selected: 0 };
+        this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates, marked: [], selected: 0 };
         return;
       }
       case "close-tab":
@@ -442,7 +441,7 @@ export class Workspace {
 
   private newPane(axis: Axis | undefined): void {
     this.addPane((root, focused, id) =>
-      (axis === undefined ? addToFirstTabs(root, id) : undefined) ?? splitPane(root, focused, axis ?? this.preferredAxis(this.tab), id),
+      (axis === undefined ? (inPaneTabs(root, focused) ? addPaneTab(root, focused, id) : addToFirstTabs(root, id)) : undefined) ?? splitPane(root, focused, axis ?? this.preferredAxis(this.tab), id),
     );
   }
 
@@ -531,7 +530,7 @@ export class Workspace {
     else if (!key.ctrl && !key.meta && isPrintable(key.sequence)) prompt.text += key.sequence;
     else return;
     if (prompt.candidates) {
-      prompt.matches = rankProjects(prompt.text, prompt.candidates).slice(0, shownMatches);
+      prompt.matches = rankProjects(prompt.text, prompt.candidates);
       prompt.selected = 0;
     }
   }

@@ -108,13 +108,14 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     graphics.forgetPane(id);
   };
 
+  const scrollbackBytes = options.config.scrollback * 1_000_000;
   type SpawnOptions = { holdOnExit?: boolean; holdOnFailure?: boolean; frameless?: boolean; tabId?: number };
   const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, options: SpawnOptions = {}) => {
     const { holdOnExit, holdOnFailure, frameless, tabId } = options;
     const env: Record<string, string> = { ...paneEnv };
     if (renderer.capabilities?.kitty_graphics) env.QMUX_KITTY_GRAPHICS = "1";
     if (tabId !== undefined) env.QMUX_TAB_DIR = services.tabDir(tabId);
-    panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless }, scheduler, {
+    panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless, scrollbackBytes }, scheduler, {
       onHeld: () => refresh(),
       onCommand: frameless || holdOnFailure ? undefined : commandEvent,
       onClipboard: (_, text) => copyToClipboard(text),

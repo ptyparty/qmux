@@ -1,4 +1,5 @@
 import { ask, askOwner } from "../ask/ask.ts";
+import { selfCommand, shellQuote } from "../ask/hosts.ts";
 import { AskStore, type AskOwner, type AskStatus, type UnseenResult } from "../ask/store.ts";
 import type { FormSpec } from "../form/schema.ts";
 import { ControlError, sendControl, type ControlRequest } from "../mux/control.ts";
@@ -41,8 +42,8 @@ export type PermissionInput = {
 
 const maxShown = 600;
 
-export function permissionForm(input: PermissionInput): FormSpec {
-  const always = input.permission_suggestions?.[0];
+export function permissionForm(input: PermissionInput, self: string[] = selfCommand()): FormSpec {
+  const always = runsAsJob(input.tool_input.command, self) ? undefined : input.permission_suggestions?.[0];
   const description = typeof input.tool_input.description === "string" ? input.tool_input.description : undefined;
   return {
     title: `Allow ${input.tool_name}?`,
@@ -196,6 +197,24 @@ export async function askQuestions(pane: AskOwner, input: QuestionInput): Promis
   };
 }
 
+export type BashInput = { hook_event_name: "PreToolUse"; tool_name: "Bash"; tool_input: { command?: unknown; description?: unknown; run_in_background?: unknown; [key: string]: unknown } };
+
+export function backgroundAsJob(input: BashInput, self: string[]): object | undefined {
+  const { command, description, run_in_background } = input.tool_input;
+  if (run_in_background !== true || typeof command !== "string" || /^\s*qmux\s+job\b/.test(command)) return undefined;
+  const name = typeof description === "string" && description.trim() ? description.trim() : command;
+  const job = shellQuote([...jobRun(self), "--wait", "--name", name, "--", "bash", "-c", command]);
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { ...input.tool_input, command: job } } };
+}
+
+function jobRun(self: string[]): string[] {
+  return [...self, "job", "run"];
+}
+
+function runsAsJob(command: unknown, self: string[]): boolean {
+  return typeof command === "string" && command.startsWith(`${shellQuote(jobRun(self))} `);
+}
+
 async function askInPopup(pane: AskOwner, spec: FormSpec, waitingFor: string): Promise<AskStatus | undefined> {
   await reportState(pane, "waiting", waitingFor);
   let outcome;
@@ -225,6 +244,10 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     return undefined;
   }
   let pane = askOwner(env);
+  if (input.hook_event_name === "PreToolUse" && input.tool_name === "Bash") {
+    const job = pane && backgroundAsJob(input as unknown as BashInput, selfCommand());
+    return job && JSON.stringify(job);
+  }
   if (!pane) {
     const attached = attachedPaneEnv(input.session_id, procDir);
     pane = attached && askOwner(attached);

@@ -25,9 +25,10 @@ export const controlRequest = z.discriminatedUnion("method", [
   }),
   z.object({
     method: z.literal("job.run"),
-    params: z.object({ command: z.array(z.string()).min(1), near: z.number().int(), name: z.string().optional() }),
+    params: z.object({ command: z.array(z.string()).min(1), near: z.number().int(), name: z.string().optional(), cwd: z.string().optional(), env: z.record(z.string(), z.string()).optional() }),
   }),
   z.object({ method: z.literal("job.status"), params: z.object({ jobId: z.number().int() }) }),
+  z.object({ method: z.literal("job.stop"), params: z.object({ jobId: z.number().int() }) }),
   z.object({ method: z.literal("claude.register"), params: z.object({ paneId: z.number().int(), socket: z.string().min(1).nullable() }) }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),

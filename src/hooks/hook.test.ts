@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskStore } from "../ask/store.ts";
 import { serveControl, type ControlRequest } from "../mux/control.ts";
-import { permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
+import { backgroundAsJob, permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-hook-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -170,5 +170,23 @@ describe("qmux hook", () => {
     const question = { hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "Tea?", options: [{ label: "Yes" }] }] } };
     expect(await runHook(JSON.stringify(request), env)).toBeUndefined();
     expect(await runHook(JSON.stringify(question), env)).toBeUndefined();
+  });
+
+  test("Claude's background commands run as qmux jobs from a pane, and nowhere else", async () => {
+    const inPane = { QMUX_SOCKET: "/nowhere", QMUX_PANE_ID: "7" };
+    const tool_input = { command: "cd api && echo 'up'", description: "Start the API", run_in_background: true };
+    const background = { hook_event_name: "PreToolUse" as const, tool_name: "Bash" as const, tool_input };
+    expect(backgroundAsJob(background, ["qmux"])).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        updatedInput: { ...tool_input, command: `qmux job run --wait --name 'Start the API' -- bash -c 'cd api && echo '\\''up'\\'''` },
+      },
+    });
+    expect(JSON.parse((await runHook(JSON.stringify(background), inPane))!).hookSpecificOutput.updatedInput.command).toContain("job run --wait");
+    expect(await runHook(JSON.stringify(background), {})).toBeUndefined();
+    expect(await runHook(JSON.stringify({ ...background, tool_input: { command: "ls" } }), inPane)).toBeUndefined();
+    expect(backgroundAsJob({ ...background, tool_input: { command: "qmux job run -- make", run_in_background: true } }, ["qmux"])).toBeUndefined();
+    const wrapped = { ...bash, tool_input: { command: "qmux job run --wait --name x -- bash -c ls" } };
+    expect(permissionForm(wrapped, ["qmux"]).elements[1]).toMatchObject({ options: [{ value: "allow" }, { value: "deny" }] });
   });
 });

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { constants } from "node:os";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { AlreadyAnsweredError, answer, ask, reopen } from "./ask/ask.ts";
@@ -258,10 +259,15 @@ async function jobCommand(args: string[]): Promise<void> {
     if (!response.ok) throw new SessionError(response.error);
     return response.result;
   };
-  const { jobId, log } = (await control({ method: "job.run", params: { command: positionals, near, name: values.name } })) as { jobId: number; log: string };
+  const { jobId, log } = (await control({ method: "job.run", params: { command: positionals, near, name: values.name, cwd: process.cwd(), env: definedEnv() } })) as { jobId: number; log: string };
   if (!values.wait) {
     console.log(jobId);
     return;
+  }
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      void sendControl(socket, { method: "job.stop", params: { jobId } }).finally(() => process.exit(128 + constants.signals[signal]));
+    });
   }
   const output = new JobOutput(log);
   for (;;) {
@@ -270,6 +276,10 @@ async function jobCommand(args: string[]): Promise<void> {
     if (status.state !== "running") process.exit(status.code ?? 1);
     await Bun.sleep(300);
   }
+}
+
+function definedEnv(): Record<string, string> {
+  return Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
 }
 
 class JobOutput {

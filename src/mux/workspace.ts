@@ -37,7 +37,7 @@ export type PanePlacement = "right" | "below" | "tab";
 
 export interface PaneHost {
   create(id: PaneId, cwd: string | undefined, command: string[] | undefined, tabId: number): void;
-  createJob(id: PaneId, cwd: string | undefined, command: string[], tabId: number): void;
+  createJob(id: PaneId, cwd: string | undefined, command: string[], tabId: number, env?: Record<string, string>): void;
   trackJob(id: PaneId, tabId: number): void;
   untrackJob(id: PaneId): void;
   runningCommand(id: PaneId): string | undefined;
@@ -226,11 +226,11 @@ export class Workspace {
     return left.length > 0 ? Math.max(Math.min(...left), 0) : undefined;
   }
 
-  runJob(near: PaneId, command: string[], name?: string): PaneId | undefined {
+  runJob(near: PaneId, command: string[], name?: string, from: { cwd?: string; env?: Record<string, string> } = {}): PaneId | undefined {
     const tab = this.tabOf(near);
     if (!tab) return undefined;
     const id = this.nextPaneId++;
-    this.host.createJob(id, this.host.cwd(near), command, tab.id);
+    this.host.createJob(id, from.cwd ?? this.host.cwd(near), command, tab.id, from.env);
     this.jobs.push({ id, tabId: tab.id, name: name ?? command.join(" "), command, state: "running", started: this.now(), seen: false });
     return id;
   }
@@ -700,8 +700,8 @@ export class Workspace {
   }
 
   private removeTab(index: number): void {
+    for (const job of this.tabJobs(this.tabs[index])) this.closeJob(job.id);
     const [removed] = this.tabs.splice(index, 1);
-    for (const job of this.tabJobs(removed)) this.closeJob(job.id);
     this.host.stopServices(removed!.id);
     this.failedServices.delete(removed!.id);
     if (this.tabs.length === 0) {

@@ -923,6 +923,17 @@ describe("Workspace", () => {
       expect(host.destroyed).toContain(id);
       expect(workspace.jobs).toEqual([]);
     });
+
+    test("closing the last tab with several jobs closes them all", () => {
+      const { host, workspace } = ide({ now: 0 });
+      const first = workspace.tab.name;
+      press(workspace, "ctrl+t", "c");
+      const jobs = [workspace.runJob(workspace.tab.focused, ["one"])!, workspace.runJob(workspace.tab.focused, ["two"])!];
+      press(workspace, "ctrl+t", "x", ...workspace.tab.name.split(""), "return");
+      expect(host.destroyed).toEqual(expect.arrayContaining(jobs));
+      expect(workspace.jobs).toEqual([]);
+      expect(workspace.tab.name).toBe(first);
+    });
   });
 
   test("Alt c messages the focused native Claude, or the tab's first one", () => {

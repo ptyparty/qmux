@@ -156,6 +156,7 @@ With the hooks in place:
 - **Permission popups:** a permission request opens a popup in the agent's tab with Allow once, Always allow and Deny. Esc hands the question back to Claude's own prompt.
 - **Plan review:** when Claude finishes planning, the plan opens as rendered markdown in a popup. Approve in auto mode, approve and auto-accept edits, approve and review each edit, or keep planning with a note for Claude. Esc dismisses the plan and stops Claude, like Esc in Claude's own dialog.
 - **Claude's questions:** with a `PreToolUse` hook on `AskUserQuestion`, Claude's questions open as a qmux popup in the agent's tab, and the answers go straight back to Claude. Esc falls back to Claude's own dialog.
+- **Background commands as jobs:** with a `PreToolUse` hook on `Bash` (matcher `AskUserQuestion|Bash` covers both), commands Claude runs in the background, such as dev servers and watchers, run as jobs in the agent's tab, named after Claude's description of them. The job starts in the directory and environment of Claude's shell. Claude still reads its output and can stop it; stopping one closes its job. Permission rules and prompts see the command wrapped in `qmux job run`, so the qmux popup offers no "Always allow" for it.
 
 Outside qmux, `qmux hook` exits at once and does nothing.
 

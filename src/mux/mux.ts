@@ -138,10 +138,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   };
 
   const scrollbackBytes = options.config.scrollback * 1_000_000;
-  type SpawnOptions = { holdOnExit?: boolean; holdOnFailure?: boolean; frameless?: boolean; job?: boolean; tabId?: number };
+  type SpawnOptions = { holdOnExit?: boolean; holdOnFailure?: boolean; frameless?: boolean; job?: boolean; tabId?: number; callerEnv?: Record<string, string> };
   const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, options: SpawnOptions = {}) => {
-    const { holdOnExit, holdOnFailure, frameless, job, tabId } = options;
-    const env: Record<string, string> = { ...paneEnv };
+    const { holdOnExit, holdOnFailure, frameless, job, tabId, callerEnv } = options;
+    const { QMUX_PANE_ID: _pane, TERM: _term, COLORTERM: _colors, ...inherited } = callerEnv ?? {};
+    const env: Record<string, string> = { ...inherited, ...paneEnv };
     if (renderer.capabilities?.kitty_graphics) env.QMUX_KITTY_GRAPHICS = "1";
     if (tabId !== undefined) env.QMUX_TAB_DIR = services.tabDir(tabId);
     panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless, job, scrollbackBytes }, scheduler, {
@@ -168,8 +169,8 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
 
   const host: PaneHost = {
     create: (id, cwd, command, tabId) => spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), { holdOnExit: true, tabId }),
-    createJob: (id, cwd, command, tabId) => {
-      spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), { holdOnExit: true, job: true, tabId });
+    createJob: (id, cwd, command, tabId, env) => {
+      spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), { holdOnExit: true, job: true, tabId, callerEnv: env });
       openJobLog(id, tabId);
     },
     trackJob: (id, tabId) => openJobLog(id, tabId),
@@ -324,17 +325,23 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return paneId === undefined ? { ok: false, error: `no pane ${near}` } : { ok: true, result: { paneId } };
         }
         case "job.run": {
-          const { near, command, name } = request.params;
-          const jobId = workspace.runJob(near, command, name);
+          const { near, command, name, cwd, env } = request.params;
+          const jobId = workspace.runJob(near, command, name, { cwd, env });
           refresh();
           if (jobId === undefined) return { ok: false, error: `no pane ${near}` };
           return { ok: true, result: { jobId, log: jobLogs.get(jobId)?.path } };
         }
         case "job.status": {
           const job = workspace.jobStatus(request.params.jobId);
+          if (!job && panes.has(request.params.jobId)) return { ok: true, result: { state: "running", code: null } };
           if (!job) return { ok: false, error: `job ${request.params.jobId} was closed` };
           return { ok: true, result: { state: job.state, code: job.code ?? null } };
         }
+        case "job.stop":
+          if (!workspace.jobStatus(request.params.jobId)) return { ok: false, error: `job ${request.params.jobId} was closed` };
+          workspace.closeJob(request.params.jobId);
+          refresh();
+          return { ok: true };
         case "claude.register":
           if (!panes.has(request.params.paneId)) return { ok: false, error: `no pane ${request.params.paneId}` };
           if (request.params.socket === null) nativeClaudes.delete(request.params.paneId);

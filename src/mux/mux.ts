@@ -342,10 +342,10 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
             }),
           };
         case "pane.focus": {
-          const { paneId, closing } = request.params;
+          const { paneId, closing, onlyJob } = request.params;
           if (!workspace.tabOf(paneId)) return { ok: false, error: `no pane ${paneId}` };
           if (workspace.jobStatus(paneId)) workspace.openJob(paneId);
-          else workspace.focusPane(paneId);
+          else if (!onlyJob) workspace.focusPane(paneId);
           if (closing !== undefined && closing !== paneId)
             setTimeout(() => {
               destroyPane(closing);

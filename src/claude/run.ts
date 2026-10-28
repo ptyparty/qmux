@@ -69,6 +69,7 @@ async function offerHooks(renderer: CliRenderer): Promise<void> {
   }
   const missing = missingHooks([settings, local]);
   if (missing.length === 0) return;
+  await showIfJob();
   const answer = await pick(renderer, "qmux hooks", `${missing.length} missing or out of date in ${paths.user}`, [
     { label: "Install them", detail: missing.map((hook) => hook.label).join(" · "), value: "install" },
     { label: "Not now", detail: "ask again next time", value: "later" },
@@ -88,6 +89,7 @@ async function chooseSession(renderer: CliRenderer): Promise<Choice | undefined>
   const [past, running, live] = await Promise.all([pastSessions(dir, 8), runningSessions(cwd), liveSessions()]);
   const items = pickerItems({ live, running, past, known, now: Date.now() });
   if (items.length === 1) return items[0]!.choice;
+  await showIfJob();
   return pick(renderer, "Claude", cwd, items.map((item) => ({ label: item.label, detail: item.detail, value: item.choice })));
 }
 
@@ -101,6 +103,13 @@ async function liveSessions(): Promise<LiveSession[]> {
     if (!(error instanceof ControlError)) throw error;
     return [];
   }
+}
+
+async function showIfJob(): Promise<void> {
+  const { QMUX_SOCKET: control, QMUX_PANE_ID: pane } = process.env;
+  const paneId = Number(pane);
+  if (!control || !Number.isInteger(paneId)) return;
+  await sendControl(control, { method: "pane.focus", params: { paneId, onlyJob: true } }, 1000).catch(() => undefined);
 }
 
 async function focusPane(paneId: number): Promise<boolean> {

@@ -9,7 +9,7 @@ export type PopupSize = { width: number; height: number };
 export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view" | "job"; askingPane?: PaneId; size?: PopupSize };
 
 export type JobState = "running" | "succeeded" | "failed";
-export type Job = { id: PaneId; tabId: number; name: string; command?: string[]; state: JobState; code?: number | null; started: number; finished?: number; seen: boolean };
+export type Job = { id: PaneId; tabId: number; name: string; command?: string[]; state: JobState; code?: number | null; started: number; finished?: number; seen: boolean; agent?: boolean };
 export type Toast = { job: Job; tab: Tab };
 
 export const agentStates = ["working", "waiting", "done", "failed"] as const;
@@ -132,14 +132,23 @@ export class Workspace {
     return this.nextPaneId++;
   }
 
+  tabPanes(tab: Tab): PaneId[] {
+    return [...paneIds(tab.root), ...this.tabJobs(tab).map((job) => job.id)];
+  }
+
+  tabOf(id: PaneId | undefined): Tab | undefined {
+    if (id === undefined) return undefined;
+    return this.tabs.find((tab) => this.tabPanes(tab).includes(id));
+  }
+
   openPopup(id: PaneId, title: string, askingPane?: PaneId): boolean {
-    const owner = this.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane)) ?? this.tab;
+    const owner = this.tabOf(askingPane) ?? this.tab;
     this.popups.push({ id, title, tabId: owner.id, kind: "ask", askingPane });
     return owner !== this.tab || (askingPane !== undefined && askingPane !== this.tab.focused);
   }
 
   openViewPopup(id: PaneId, title: string, near: PaneId, size?: PopupSize): number | undefined {
-    const owner = this.tabs.find((tab) => paneIds(tab.root).includes(near));
+    const owner = this.tabOf(near);
     if (!owner) return undefined;
     this.popups.push({ id, title, tabId: owner.id, kind: "view", size });
     return owner.id;
@@ -170,12 +179,13 @@ export class Workspace {
   }
 
   setAgentState(id: PaneId, state: AgentState | undefined): boolean {
-    if (!this.tabs.some((tab) => paneIds(tab.root).includes(id))) return false;
+    if (!this.tabOf(id)) return false;
     if (state === undefined) {
       this.agents.delete(id);
       return false;
     }
-    const watching = id === this.tab.focused;
+    this.markAgent(id);
+    const watching = id === this.tab.focused || this.popup?.id === id;
     const changed = this.agents.get(id) !== state;
     this.agents.set(id, state);
     return changed && !watching && state !== "working";
@@ -217,7 +227,7 @@ export class Workspace {
   }
 
   runJob(near: PaneId, command: string[], name?: string): PaneId | undefined {
-    const tab = this.tabs.find((candidate) => paneIds(candidate.root).includes(near));
+    const tab = this.tabOf(near);
     if (!tab) return undefined;
     const id = this.nextPaneId++;
     this.host.createJob(id, this.host.cwd(near), command, tab.id);
@@ -231,6 +241,11 @@ export class Workspace {
     Object.assign(job, { state: code === 0 ? "succeeded" : "failed", code, finished: this.now(), seen: this.popup?.id === id });
   }
 
+  markAgent(id: PaneId): void {
+    const job = this.jobStatus(id);
+    if (job) job.agent = true;
+  }
+
   jobStatus(id: PaneId): Job | undefined {
     return this.jobs.find((job) => job.id === id);
   }
@@ -242,6 +257,7 @@ export class Workspace {
     this.active = index;
     if (!this.popups.some((popup) => popup.id === id)) this.popups.push({ id, title: job.name, tabId: job.tabId, kind: "job" });
     if (job.state !== "running") job.seen = true;
+    this.acknowledge(id);
   }
 
   closeJob(id: PaneId): void {
@@ -254,6 +270,8 @@ export class Workspace {
     if (index >= 0) this.jobs.splice(index, 1);
     this.popupExited(id);
     this.paneNames.delete(id);
+    this.agents.delete(id);
+    this.commands.delete(id);
     this.selectedJob = Math.max(Math.min(this.selectedJob, this.tabJobs().length - 1), 0);
   }
 
@@ -341,7 +359,7 @@ export class Workspace {
   tabAttention(tab: Tab): AgentState | undefined {
     if (this.popupsWaiting(tab) > 0) return "waiting";
     let most: AgentState | undefined;
-    for (const id of paneIds(tab.root)) {
+    for (const id of this.tabPanes(tab)) {
       const state = this.agents.get(id);
       if (state && (!most || urgency[state] > urgency[most])) most = state;
     }
@@ -349,7 +367,7 @@ export class Workspace {
   }
 
   private jumpToAttention(): void {
-    const order = this.tabs.flatMap((tab, index) => paneIds(tab.root).map((id) => ({ index, id })));
+    const order = this.tabs.flatMap((tab, index) => this.tabPanes(tab).map((id) => ({ index, id })));
     const start = order.findIndex((entry) => entry.index === this.active && entry.id === this.tab.focused);
     const rotated = [...order.slice(start + 1), ...order.slice(0, start + 1)];
     const asks = this.popups.filter((popup) => popup.kind === "ask");
@@ -365,7 +383,8 @@ export class Workspace {
       return;
     }
     this.active = done.index;
-    this.tab.focused = done.id;
+    if (!this.jobStatus(done.id)) this.tab.focused = done.id;
+    else if (!asking.has(done.id)) this.openJob(done.id);
     this.lastKeyAt = Number.NEGATIVE_INFINITY;
   }
 
@@ -373,6 +392,7 @@ export class Workspace {
     this.message = undefined;
     const consumed = this.routeKey(key);
     if (!consumed && !this.popup) this.acknowledge(this.tab.focused);
+    else if (!consumed && this.popup?.kind === "job") this.acknowledge(this.popup.id);
     return consumed;
   }
 
@@ -587,7 +607,7 @@ export class Workspace {
       case "next-attention":
         return this.jumpToAttention();
       case "compose-claude":
-        this.message = this.host.composeClaude(this.tab.focused, paneIds(this.tab.root));
+        this.message = this.host.composeClaude(this.tab.focused, this.tabPanes(this.tab));
         return;
       case "last-tab": {
         const index = this.tabs.findIndex((tab) => tab.id === this.previousTabId);
@@ -767,7 +787,7 @@ function keyLabel(name: string): string {
 }
 
 function jobBadge(job: Job): CommandState | undefined {
-  if (job.state === "running") return "running";
+  if (job.state === "running") return job.agent ? undefined : "running";
   return job.state === "failed" && !job.seen ? "failed" : undefined;
 }
 

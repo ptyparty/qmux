@@ -867,6 +867,39 @@ describe("Workspace", () => {
       expect(workspace.tab.focused).toBe(4);
     });
 
+    test("an agent running as a job badges its tab, owns its popups, and is found by Alt a and Alt c", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      const claude = workspace.runJob(2, ["qmux", "claude"], "claude")!;
+      expect(workspace.tabCommandState(workspace.tab)).toBe("running");
+      workspace.markAgent(claude);
+      expect(workspace.tabCommandState(workspace.tab)).toBeUndefined();
+      workspace.setAgentState(claude, "working");
+      expect(workspace.tabAttention(workspace.tab)).toBe("working");
+      expect(workspace.tabCommandState(workspace.tab)).toBeUndefined();
+      press(workspace, "ctrl+t", "c");
+      expect(workspace.setAgentState(claude, "done")).toBe(true);
+      expect(workspace.openPopup(90, "Allow Write?", claude)).toBe(true);
+      expect(workspace.popups.at(-1)?.tabId).toBe(workspace.tabs.find((tab) => tab.name === "merlin")!.id);
+      workspace.popupExited(90);
+      press(workspace, "alt+a");
+      expect(workspace.tab.name).toBe("merlin");
+      expect(workspace.popup).toMatchObject({ id: claude, kind: "job" });
+      expect(workspace.agents.has(claude)).toBe(false);
+      workspace.setAgentState(claude, "waiting");
+      press(workspace, "x");
+      expect(workspace.agents.get(claude)).toBe("working");
+      press(workspace, "ctrl+s", "h");
+      host.claudes.add(claude);
+      press(workspace, "alt+c");
+      expect(host.composed).toEqual([claude]);
+      const tests = workspace.runJob(claude, ["bun", "test"])!;
+      expect(workspace.jobStatus(tests)?.tabId).toBe(workspace.tab.id);
+      workspace.setAgentState(claude, "done");
+      workspace.closeJob(claude);
+      expect(workspace.agents.has(claude)).toBe(false);
+    });
+
     test("the last pane in a tab can't go to the background", () => {
       const host = new FakeHost();
       const workspace = new Workspace(host);

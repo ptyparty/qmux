@@ -86,7 +86,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     if (!running || Date.now() - running.started < longCommandMs) return;
     const succeeded = event.code === 0;
     if (workspace.setCommandState(id, succeeded ? "succeeded" : "failed")) {
-      const where = workspace.tabs.find((tab) => paneIds(tab.root).includes(id))?.name ?? "qmux";
+      const where = workspace.tabOf(id)?.name ?? "qmux";
       renderer.triggerNotification(succeeded ? "A command finished" : `A command failed (exit ${event.code})`, where);
     }
     refresh();
@@ -228,14 +228,14 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     const id = workspace.reservePaneId();
     spawnPane(id, host.cwd(askingPane ?? workspace.tab.focused), command, (exited) => workspace.popupExited(exited), { frameless: true });
     if (workspace.openPopup(id, title, askingPane)) {
-      const where = workspace.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane))?.name ?? "qmux";
+      const where = workspace.tabOf(askingPane)?.name ?? "qmux";
       renderer.triggerNotification(title, where);
     }
     refresh();
   };
 
   const openViewPopup = (near: PaneId, command: string[], title: string, size: PopupSize | undefined): PaneId | undefined => {
-    const tabId = workspace.tabs.find((tab) => paneIds(tab.root).includes(near))?.id;
+    const tabId = workspace.tabOf(near)?.id;
     if (tabId === undefined) return undefined;
     const id = workspace.reservePaneId();
     spawnPane(id, host.cwd(near), command, (exited) => workspace.popupExited(exited), { holdOnFailure: true, tabId });
@@ -303,7 +303,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           const { paneId, state, detail } = request.params;
           const notify = workspace.setAgentState(paneId, state === "clear" ? undefined : state);
           if (notify) {
-            const where = workspace.tabs.find((tab) => paneIds(tab.root).includes(paneId))?.name ?? "qmux";
+            const where = workspace.tabOf(paneId)?.name ?? "qmux";
             renderer.triggerNotification(detail ?? (state === "waiting" ? "An agent needs you" : "An agent finished"), where);
           }
           refresh();
@@ -338,7 +338,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
         case "claude.register":
           if (!panes.has(request.params.paneId)) return { ok: false, error: `no pane ${request.params.paneId}` };
           if (request.params.socket === null) nativeClaudes.delete(request.params.paneId);
-          else nativeClaudes.set(request.params.paneId, request.params.socket);
+          else {
+            nativeClaudes.set(request.params.paneId, request.params.socket);
+            workspace.markAgent(request.params.paneId);
+            refresh();
+          }
           return { ok: true };
         case "session.quit":
           workspace.quit = true;

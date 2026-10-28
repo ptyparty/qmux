@@ -163,4 +163,12 @@ describe("qmux hook", () => {
     expect(requests[2]).toMatchObject({ params: { title: "Allow Bash?", paneId: 7 } });
     expect(owners).toEqual([undefined]);
   });
+
+  test("native qmux Claude sessions answer their own permission requests and questions", async () => {
+    const env = { QMUX_SOCKET: "/nowhere", QMUX_PANE_ID: "7", QMUX_NATIVE_CLAUDE: "1" };
+    const request = { hook_event_name: "PermissionRequest", tool_name: "Write", tool_input: { file_path: "/a" } };
+    const question = { hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "Tea?", options: [{ label: "Yes" }] }] } };
+    expect(await runHook(JSON.stringify(request), env)).toBeUndefined();
+    expect(await runHook(JSON.stringify(question), env)).toBeUndefined();
+  });
 });

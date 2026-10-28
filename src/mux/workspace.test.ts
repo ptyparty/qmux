@@ -39,6 +39,14 @@ class FakeHost implements PaneHost {
   shellCommand(text: string): string[] {
     return ["sh", "-c", text];
   }
+  claudes = new Set<number>();
+  composed: number[] = [];
+  composeClaude(near: number, candidates: number[]): string | undefined {
+    const target = this.claudes.has(near) ? near : candidates.find((id) => this.claudes.has(id));
+    if (target === undefined) return "No native Claude in this tab";
+    this.composed.push(target);
+    return undefined;
+  }
   started: [number, string[][], string | undefined][] = [];
   stopped: number[] = [];
   startServices(tabId: number, services: { command: string[] }[], cwd: string | undefined): void {
@@ -820,6 +828,10 @@ describe("Workspace", () => {
       workspace.runJob(2, ["one"]);
       const two = workspace.runJob(2, ["two"])!;
       press(workspace, "ctrl+s", "down", "r");
+      expect(host.reruns).toEqual([]);
+      expect(workspace.message).toBe("two is still running");
+      workspace.jobFinished(two, 1);
+      press(workspace, "r");
       expect(host.reruns).toEqual([two]);
       press(workspace, "return");
       expect(workspace.popup?.id).toBe(two);
@@ -845,9 +857,12 @@ describe("Workspace", () => {
       workspace.jobFinished(4, 0);
       expect(workspace.jobStatus(4)?.state).toBe("succeeded");
       workspace.openJob(4);
-      press(workspace, "ctrl+s", "r");
+      press(workspace, "return");
       expect(workspace.message).toBe("Only jobs started from a command can re-run");
-      press(workspace, "ctrl+s", "p");
+      press(workspace, "escape");
+      expect(workspace.popup).toBeUndefined();
+      workspace.openJob(4);
+      press(workspace, "p");
       expect(paneIds(workspace.tab.root)).toEqual([2, 3, 4]);
       expect(workspace.tab.focused).toBe(4);
     });
@@ -875,5 +890,33 @@ describe("Workspace", () => {
       expect(host.destroyed).toContain(id);
       expect(workspace.jobs).toEqual([]);
     });
+  });
+
+  test("Alt c messages the focused native Claude, or the tab's first one", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    press(workspace, "alt+c");
+    expect(workspace.message).toBe("No native Claude in this tab");
+    press(workspace, "ctrl+p", "r");
+    host.claudes.add(1);
+    press(workspace, "alt+c");
+    expect(host.composed).toEqual([1]);
+    expect(workspace.message).toBeUndefined();
+    host.claudes.add(2);
+    press(workspace, "alt+c");
+    expect(host.composed).toEqual([1, 2]);
+    expect(workspace.tab.focused).toBe(2);
+  });
+
+  test("Ctrl+s reaches an ask popup, so forms can submit, but opens jobs mode over a job", () => {
+    const workspace = new Workspace(new FakeHost());
+    workspace.openPopup(50, "Question");
+    expect(press(workspace, "ctrl+s")).toEqual([false]);
+    expect(workspace.mode).toBe("normal");
+    workspace.popupExited(50);
+    const job = workspace.runJob(1, ["sleep", "5"])!;
+    workspace.openJob(job);
+    press(workspace, "ctrl+s");
+    expect(workspace.mode).toBe("jobs");
   });
 });

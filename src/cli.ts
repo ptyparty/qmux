@@ -25,6 +25,9 @@ Usage:
   qmux pane open [--right|--below|--tab|--popup] [--name NAME] [--no-focus] [--width PCT] [--height PCT] -- COMMAND...
       From inside a session, open a pane running COMMAND beside this one, or over this tab with --popup.
       A popup closes when COMMAND succeeds; --width and --height size it. Prints the new pane's id.
+  qmux claude [--resume ID|--continue] [-- CLAUDE_ARGS...]
+      Run a Claude Code session in this pane with qmux drawing the conversation (experimental).
+      From anywhere else in the tab, Alt+c sends it a message.
   qmux job run [--name NAME] [--wait] -- COMMAND...
       From inside a session, run COMMAND out of sight as a job in this tab; a toast says when it is done.
       Prints the job's id. With --wait, print the job's output as it runs and exit with its exit code.
@@ -87,6 +90,8 @@ async function main(argv: string[]): Promise<void> {
       return paneCommand(rest);
     case "job":
       return jobCommand(rest);
+    case "claude":
+      return claudeCommand(rest);
     case "server":
       return (await import("./mux/session/server.ts")).runServer(requireName(rest));
     case "help":
@@ -224,6 +229,18 @@ async function paneCommand(args: string[]): Promise<void> {
   });
   if (!response.ok) throw new SessionError(response.error);
   console.log((response.result as { paneId: number }).paneId);
+}
+
+async function claudeCommand(args: string[]): Promise<void> {
+  const { runClaude, runCompose } = await import("./claude/run.ts");
+  if (args[0] === "compose") {
+    const { values } = parse(args.slice(1), { socket: { type: "string" }, name: { type: "string" } });
+    if (!values.socket) throw new UsageError("missing --socket");
+    return runCompose(values.socket, values.name ?? "Claude");
+  }
+  const { values, positionals } = parse(args, { resume: { type: "string" }, continue: { type: "boolean" } });
+  if (values.resume && values.continue) throw new UsageError("pick one of --resume and --continue");
+  return runClaude([...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...positionals]);
 }
 
 async function jobCommand(args: string[]): Promise<void> {

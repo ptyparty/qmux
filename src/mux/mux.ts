@@ -8,6 +8,7 @@ import type { ControlRequest, ControlResponse } from "./control.ts";
 import type { GraphicsRelay } from "./graphics.ts";
 import { findProjects } from "./projects.ts";
 import { paneIds, type PaneId } from "./layout.ts";
+import { selfCommand } from "../ask/hosts.ts";
 import { Pane, type CommandEvent } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
 import { TabServices } from "./services.ts";
@@ -54,6 +55,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   let toastTimer: Timer | undefined;
   const runningCommands = new Map<PaneId, { started: number; timer: Timer; commandLine: string }>();
   const jobLogs = new Map<PaneId, { fd: number; path: string }>();
+  const nativeClaudes = new Map<PaneId, string>();
 
   const copyToClipboard = (text: string) => {
     workspace.message = renderer.copyToClipboardOSC52(text) ? `Copied ${text.length} characters` : "This terminal does not support copying (OSC 52)";
@@ -131,6 +133,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     panes.get(id)?.destroy();
     panes.delete(id);
     closeJobLog(id);
+    nativeClaudes.delete(id);
     graphics.forgetPane(id);
   };
 
@@ -176,6 +179,13 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     },
     runningCommand: (id) => runningCommands.get(id)?.commandLine,
     shellCommand: (text) => [process.env.SHELL ?? "/bin/sh", "-c", text],
+    composeClaude: (near, candidates) => {
+      const target = nativeClaudes.has(near) ? near : candidates.find((id) => nativeClaudes.has(id));
+      if (target === undefined) return "No native Claude in this tab";
+      const name = workspace.paneNames.get(target) ?? "Claude";
+      openViewPopup(near, [...selfCommand(), "claude", "compose", "--socket", nativeClaudes.get(target)!, "--name", name], `Message ${name}`, { width: 70, height: 30 });
+      return undefined;
+    },
     startServices: (tabId, specs, cwd) => services.start(tabId, specs, cwd),
     stopServices: (tabId) => void services.stop(tabId),
     isHeld: (id) => panes.get(id)?.exited ?? false,
@@ -325,6 +335,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           if (!job) return { ok: false, error: `job ${request.params.jobId} was closed` };
           return { ok: true, result: { state: job.state, code: job.code ?? null } };
         }
+        case "claude.register":
+          if (!panes.has(request.params.paneId)) return { ok: false, error: `no pane ${request.params.paneId}` };
+          if (request.params.socket === null) nativeClaudes.delete(request.params.paneId);
+          else nativeClaudes.set(request.params.paneId, request.params.socket);
+          return { ok: true };
         case "session.quit":
           workspace.quit = true;
           refresh();

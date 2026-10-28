@@ -93,6 +93,19 @@ Run builds and test suites with `qmux job run --wait -- <command>` so the user c
 
 Closing a tab closes its jobs. A job's output is also written to `$QMUX_TAB_DIR/jobs/<id>.log`.
 
+## Native Claude (experimental)
+
+`qmux claude [--resume ID|--continue] [-- CLAUDE_ARGS...]` runs a Claude Code session in the pane with qmux drawing the conversation instead of Claude's own TUI. Claude's text renders as markdown as it streams, each tool call is one line that gets a ✓ or ✗ when it finishes, and a status line shows whether Claude is ready, working or waiting for you, with the model, cost and session id. Arguments after `--` go to `claude`, for example `-- --model sonnet --permission-mode acceptEdits`.
+
+- **Enter** sends the message in the box at the bottom, **Alt+Enter** adds a newline, and messages sent while Claude works wait their turn.
+- **Esc** interrupts Claude while it works.
+- **PgUp/PgDn** or the mouse wheel scroll back through the conversation.
+- **Ctrl+d** on an empty box quits and prints `claude --resume <id>`, so the conversation can carry on in Claude's TUI. A conversation can't be open in both at once.
+
+Permission requests, plans to review and Claude's questions open as the same qmux popups the hooks use, wherever you are in the tab, and the hooks keep the tab's `🧠` and `🚀` badges up to date. From any pane in the tab, **Alt+c** opens a box that sends a message to the tab's native Claude (the focused one, or else the first) without moving focus.
+
+Add `qmux` to `untrackedCommands` if the `⏳` badge on a pane running `qmux claude` gets in the way.
+
 ## Scrollback
 
 Each pane keeps 50 MB of history by default, roughly 70,000 lines at 80 columns and fewer in wider panes. Memory is only used as history fills. Set `scrollback` in the config to another number of megabytes.

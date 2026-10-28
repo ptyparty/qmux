@@ -42,6 +42,7 @@ export interface PaneHost {
   untrackJob(id: PaneId): void;
   runningCommand(id: PaneId): string | undefined;
   shellCommand(text: string): string[];
+  composeClaude(near: PaneId, candidates: PaneId[]): string | undefined;
   startServices(tabId: number, services: ServiceSpec[], cwd: string | undefined): void;
   stopServices(tabId: number): void;
   projects(): Project[];
@@ -58,7 +59,8 @@ export interface PaneHost {
 
 export type InputKey = Key & { sequence: string };
 
-const popupPassthrough = new Set(["ctrl+t", "ctrl+o", "ctrl+s"]);
+const popupPassthrough = new Set(["ctrl+t", "ctrl+o"]);
+const jobPopupPassthrough = new Set([...popupPassthrough, "ctrl+s"]);
 
 export class Workspace {
   tabs: Tab[] = [];
@@ -260,6 +262,10 @@ export class Workspace {
       this.message = "Only jobs started from a command can re-run";
       return;
     }
+    if (job.state === "running") {
+      this.message = `${job.name} is still running`;
+      return;
+    }
     this.host.rerun(job.id);
     Object.assign(job, { state: "running", code: undefined, started: this.now(), finished: undefined, seen: false });
   }
@@ -388,15 +394,17 @@ export class Workspace {
       return true;
     }
     const popup = this.popup;
-    if (popup?.kind === "job" && this.mode === "normal" && this.host.isHeld(popup.id) && !popupPassthrough.has(keyName(key))) {
-      return this.finishedJobKey(popup.id, key);
+    const passthrough = popup?.kind === "job" ? jobPopupPassthrough : popupPassthrough;
+    const finishedJob = popup?.kind === "job" && this.jobStatus(popup.id)?.state !== "running";
+    if (finishedJob && this.mode === "normal" && !passthrough.has(keyName(key))) {
+      return this.finishedJobKey(popup!.id, key);
     }
     if (popup?.kind === "view" && this.host.isHeld(popup.id)) {
       this.host.destroy(popup.id);
       this.popupExited(popup.id);
       return true;
     }
-    if (popup && this.mode === "normal" && !popupPassthrough.has(keyName(key))) return false;
+    if (popup && this.mode === "normal" && !passthrough.has(keyName(key))) return false;
     const binding = lookup(this.mode, key);
     if (binding) {
       const before = `${this.active}:${this.tab.focused}`;
@@ -578,6 +586,9 @@ export class Workspace {
         return;
       case "next-attention":
         return this.jumpToAttention();
+      case "compose-claude":
+        this.message = this.host.composeClaude(this.tab.focused, paneIds(this.tab.root));
+        return;
       case "last-tab": {
         const index = this.tabs.findIndex((tab) => tab.id === this.previousTabId);
         if (index >= 0) this.active = index;

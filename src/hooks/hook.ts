@@ -231,6 +231,8 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     if (!pane) return undefined;
     Object.assign(process.env, attached);
   }
+  const asksUser = input.hook_event_name === "PermissionRequest" || (input.hook_event_name === "PreToolUse" && input.tool_name === "AskUserQuestion");
+  if (asksUser && env.QMUX_NATIVE_CLAUDE) return undefined;
   if (input.hook_event_name === "PermissionRequest" && input.tool_name === "ExitPlanMode") {
     const decision = await askPlan(pane, input as unknown as PlanInput);
     return decision ? JSON.stringify(decision) : undefined;
@@ -262,7 +264,7 @@ export function unseenNotice(unseen: UnseenResult[]): string | undefined {
   return ["qmux forms you opened were closed since you last checked on them:", ...lines].join("\n");
 }
 
-function summarizeToolInput(toolInput: Record<string, unknown>): string {
+export function summarizeToolInput(toolInput: Record<string, unknown>): string {
   const preferred = ["command", "file_path", "path", "url", "pattern", "query"].find((key) => typeof toolInput[key] === "string");
   const text = preferred ? String(toolInput[preferred]) : JSON.stringify(toolInput, null, 2);
   return text.length > maxShown ? `${text.slice(0, maxShown)}…` : text;

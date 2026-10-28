@@ -254,6 +254,8 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     if (!pane) return undefined;
     Object.assign(process.env, attached);
   }
+  const session = sessionForEvent(input);
+  if (session && input.hook_event_name === "SessionStart") await reportSession(pane, session);
   const asksUser = input.hook_event_name === "PermissionRequest" || (input.hook_event_name === "PreToolUse" && input.tool_name === "AskUserQuestion");
   if (asksUser && env.QMUX_NATIVE_CLAUDE) return undefined;
   if (input.hook_event_name === "PermissionRequest" && input.tool_name === "ExitPlanMode") {
@@ -269,7 +271,7 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     return answer ? JSON.stringify(answer) : undefined;
   }
   const update = stateForEvent(input);
-  if (update) await reportState(pane, update.state, update.detail);
+  if (update) await reportState(pane, update.state, update.detail, session);
   if (input.hook_event_name === "UserPromptSubmit") {
     const notice = unseenNotice(await new AskStore().claimUnseen(pane));
     return notice && JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: notice } });
@@ -299,9 +301,22 @@ function describeSuggestion(suggestion: PermissionSuggestion): string {
   return `${rules.join(", ") || suggestion.type}${where}`;
 }
 
-export async function reportState(pane: AskOwner, state: AgentStateName, detail?: string): Promise<void> {
+export function sessionForEvent(input: HookInput): string | undefined {
+  const tracked = ["SessionStart", "UserPromptSubmit", "SessionEnd"].includes(String(input.hook_event_name));
+  return tracked && typeof input.session_id === "string" && input.session_id ? input.session_id : undefined;
+}
+
+async function reportSession(pane: AskOwner, sessionId: string): Promise<void> {
   try {
-    await sendControl(pane.socket, { method: "agent.state", params: { paneId: pane.paneId, state, detail } }, 1000);
+    await sendControl(pane.socket, { method: "agent.session", params: { paneId: pane.paneId, sessionId } }, 1000);
+  } catch (error) {
+    if (!(error instanceof ControlError)) throw error;
+  }
+}
+
+export async function reportState(pane: AskOwner, state: AgentStateName, detail?: string, sessionId?: string): Promise<void> {
+  try {
+    await sendControl(pane.socket, { method: "agent.state", params: { paneId: pane.paneId, state, detail, sessionId } }, 1000);
   } catch (error) {
     if (!(error instanceof ControlError)) throw error;
   }

@@ -9,7 +9,7 @@ export const controlRequest = z.discriminatedUnion("method", [
   z.object({ method: z.literal("project.open"), params: z.object({ target: z.string().min(1) }) }),
   z.object({
     method: z.literal("agent.state"),
-    params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional() }),
+    params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional(), sessionId: z.string().min(1).optional() }),
   }),
   z.object({
     method: z.literal("pane.open"),
@@ -29,6 +29,9 @@ export const controlRequest = z.discriminatedUnion("method", [
   }),
   z.object({ method: z.literal("job.status"), params: z.object({ jobId: z.number().int() }) }),
   z.object({ method: z.literal("job.stop"), params: z.object({ jobId: z.number().int() }) }),
+  z.object({ method: z.literal("agent.session"), params: z.object({ paneId: z.number().int(), sessionId: z.string().min(1) }) }),
+  z.object({ method: z.literal("claude.sessions") }),
+  z.object({ method: z.literal("pane.focus"), params: z.object({ paneId: z.number().int(), closing: z.number().int().optional() }) }),
   z.object({ method: z.literal("claude.register"), params: z.object({ paneId: z.number().int(), socket: z.string().min(1).nullable() }) }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),

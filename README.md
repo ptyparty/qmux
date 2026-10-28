@@ -104,6 +104,8 @@ Closing a tab closes its jobs. A job's output is also written to `$QMUX_TAB_DIR/
 
 Permission requests, plans to review and Claude's questions open as the same qmux popups the hooks use, wherever you are in the tab, and the hooks keep the tab's `🧠` and `🚀` badges up to date. From any pane in the tab, **Alt+c** opens a box that sends a message to the tab's native Claude (the focused one, or else the first) without moving focus.
 
+Started without `--resume` or `--continue` in a directory with past conversations, `qmux claude` first lists them in the pane: conversations open in another qmux pane, ones running in other terminals, **New conversation**, and the last few past ones with their age and last prompt. Picking one open in a qmux pane moves focus there and closes this pane instead of opening the conversation twice. Esc quits.
+
 Add `qmux` to `untrackedCommands` if the `⏳` badge on a pane running `qmux claude` gets in the way.
 
 ## Scrollback
@@ -156,6 +158,7 @@ With the hooks in place:
 - **Permission popups:** a permission request opens a popup in the agent's tab with Allow once, Always allow and Deny. Esc hands the question back to Claude's own prompt.
 - **Plan review:** when Claude finishes planning, the plan opens as rendered markdown in a popup. Approve in auto mode, approve and auto-accept edits, approve and review each edit, or keep planning with a note for Claude. Esc dismisses the plan and stops Claude, like Esc in Claude's own dialog.
 - **Claude's questions:** with a `PreToolUse` hook on `AskUserQuestion`, Claude's questions open as a qmux popup in the agent's tab, and the answers go straight back to Claude. Esc falls back to Claude's own dialog.
+- **Sessions:** with `SessionStart` (no matcher) also pointed at the hook, qmux knows which conversation each pane holds as soon as it starts. Without it, a pane's conversation is known from its first prompt. `qmux claude` uses this to send you to a conversation that is already open.
 - **Background commands as jobs:** with a `PreToolUse` hook on `Bash` (matcher `AskUserQuestion|Bash` covers both), commands Claude runs in the background, such as dev servers and watchers, run as jobs in the agent's tab, named after Claude's description of them. The job starts in the directory and environment of Claude's shell. Claude still reads its output and can stop it; stopping one closes its job. Permission rules and prompts see the command wrapped in `qmux job run`, so the qmux popup offers no "Always allow" for it.
 
 Outside qmux, `qmux hook` exits at once and does nothing.

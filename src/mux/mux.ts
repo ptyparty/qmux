@@ -56,6 +56,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   const runningCommands = new Map<PaneId, { started: number; timer: Timer; commandLine: string }>();
   const jobLogs = new Map<PaneId, { fd: number; path: string }>();
   const nativeClaudes = new Map<PaneId, string>();
+  const paneSessions = new Map<PaneId, string>();
 
   const copyToClipboard = (text: string) => {
     workspace.message = renderer.copyToClipboardOSC52(text) ? `Copied ${text.length} characters` : "This terminal does not support copying (OSC 52)";
@@ -129,11 +130,18 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     for (const pane of panes.values()) pane.syncSize();
   };
 
+  const trackSession = (id: PaneId, sessionId: string, ended: boolean) => {
+    if (ended) {
+      if (paneSessions.get(id) === sessionId) paneSessions.delete(id);
+    } else if (panes.has(id)) paneSessions.set(id, sessionId);
+  };
+
   const destroyPane = (id: PaneId) => {
     panes.get(id)?.destroy();
     panes.delete(id);
     closeJobLog(id);
     nativeClaudes.delete(id);
+    paneSessions.delete(id);
     graphics.forgetPane(id);
   };
 
@@ -300,8 +308,33 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return { ok: true };
         case "session.info":
           return { ok: true, result: { session: options.session, tabs: workspace.tabs.length, panes: panes.size } };
+        case "agent.session":
+          trackSession(request.params.paneId, request.params.sessionId, false);
+          return { ok: true };
+        case "claude.sessions":
+          return {
+            ok: true,
+            result: [...paneSessions].flatMap(([paneId, sessionId]) => {
+              const tab = workspace.tabOf(paneId);
+              return tab ? [{ paneId, sessionId, tab: tab.name }] : [];
+            }),
+          };
+        case "pane.focus": {
+          const { paneId, closing } = request.params;
+          if (!workspace.tabOf(paneId)) return { ok: false, error: `no pane ${paneId}` };
+          workspace.focusPane(paneId);
+          if (closing !== undefined && closing !== paneId)
+            setTimeout(() => {
+              destroyPane(closing);
+              workspace.paneExited(closing);
+              refresh();
+            }, 0);
+          refresh();
+          return { ok: true };
+        }
         case "agent.state": {
-          const { paneId, state, detail } = request.params;
+          const { paneId, state, detail, sessionId } = request.params;
+          if (sessionId) trackSession(paneId, sessionId, state === "clear");
           const notify = workspace.setAgentState(paneId, state === "clear" ? undefined : state);
           if (notify) {
             const where = workspace.tabOf(paneId)?.name ?? "qmux";

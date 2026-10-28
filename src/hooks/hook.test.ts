@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskStore } from "../ask/store.ts";
 import { serveControl, type ControlRequest } from "../mux/control.ts";
-import { backgroundAsJob, permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
+import { backgroundAsJob, sessionForEvent, permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-hook-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -33,6 +33,14 @@ describe("qmux hook", () => {
     expect(stateForEvent({ hook_event_name: "Notification", notification_type: "idle_prompt" })).toMatchObject({ state: "done" });
     expect(stateForEvent({ hook_event_name: "Notification", notification_type: "auth_success" })).toBeUndefined();
     expect(stateForEvent({ hook_event_name: "SessionStart" })).toBeUndefined();
+  });
+
+  test("session starts, prompts and ends report which session the pane holds", () => {
+    expect(sessionForEvent({ hook_event_name: "SessionStart", session_id: "s1" })).toBe("s1");
+    expect(sessionForEvent({ hook_event_name: "UserPromptSubmit", session_id: "s1" })).toBe("s1");
+    expect(sessionForEvent({ hook_event_name: "SessionEnd", session_id: "s1" })).toBe("s1");
+    expect(sessionForEvent({ hook_event_name: "Stop", session_id: "s1" })).toBeUndefined();
+    expect(sessionForEvent({ hook_event_name: "SessionStart" })).toBeUndefined();
   });
 
   test("the permission form shows the command and offers the suggested rule", () => {

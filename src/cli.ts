@@ -241,7 +241,9 @@ async function claudeCommand(args: string[]): Promise<void> {
   }
   const { values, positionals } = parse(args, { resume: { type: "string" }, continue: { type: "boolean" } });
   if (values.resume && values.continue) throw new UsageError("pick one of --resume and --continue");
-  return runClaude([...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...positionals]);
+  const picksItself = ["--resume", "-r", "--continue", "-c", "--session-id", "--fork-session", "--from-pr"];
+  const pick = !values.resume && !values.continue && !positionals.some((arg) => picksItself.includes(arg.split("=")[0]!));
+  return runClaude([...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...positionals], { pick });
 }
 
 async function jobCommand(args: string[]): Promise<void> {

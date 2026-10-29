@@ -23,6 +23,7 @@ export type Command =
   | { type: "next-attention" }
   | { type: "compose-claude" }
   | { type: "peek-reply" }
+  | { type: "dismiss-reply" }
   | { type: "toggle-job" }
   | { type: "dock-job" }
   | { type: "last-tab" }
@@ -77,6 +78,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["alt+a"], command: { type: "next-attention" } },
       { keys: ["alt+c"], command: { type: "compose-claude" } },
       { keys: ["alt+p"], command: { type: "peek-reply" } },
+      { keys: ["alt+x"], command: { type: "dismiss-reply" } },
       { keys: ["alt+j"], command: { type: "toggle-job" } },
     ],
     hints: [

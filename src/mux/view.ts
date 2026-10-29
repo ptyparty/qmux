@@ -162,7 +162,7 @@ export class MuxView {
       const where = toast.tab === this.workspace.tab ? "" : ` · ${toast.tab.name}`;
       if (toast.kind === "reply") {
         const name = this.workspace.paneNames.get(toast.id) ?? "Claude";
-        return { text: `💬 ${name}${where} · ${firstLine(toast.reply.text, 60)} · Alt p`, color: theme.accent };
+        return { text: `💬 ${name}${where} · ${firstLine(toast.reply.text, 60)} · Alt p peek · Alt x dismiss`, color: theme.accent };
       }
       const { job } = toast;
       const open = job.state === "failed" ? " · Alt a" : "";

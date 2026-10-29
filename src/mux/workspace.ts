@@ -79,6 +79,7 @@ export class Workspace {
   readonly replies = new Map<PaneId, Reply>();
   private readonly hideOnReply = new Set<PaneId>();
   private lastJob: PaneId | undefined;
+  private peeking = false;
   readonly commands = new Map<PaneId, CommandState>();
   readonly jobs: Job[] = [];
   selectedJob = 0;
@@ -191,7 +192,10 @@ export class Workspace {
     this.markAgent(id);
     if (state === "working" && this.hideOnReply.has(id)) this.popupExited(id);
     const watching = id === this.tab.focused || this.popup?.id === id;
-    if (reply !== undefined) this.replies.set(id, { text: reply, at: this.now(), unread: !watching });
+    if (reply !== undefined) {
+      this.replies.delete(id);
+      this.replies.set(id, { text: reply, at: this.now(), unread: !watching });
+    }
     const changed = this.agents.get(id) !== state;
     this.agents.set(id, state);
     return changed && !watching && state !== "working";
@@ -314,7 +318,10 @@ export class Workspace {
     if (index < 0) return;
     const tab = this.tabs[index]!;
     const name = job.name;
+    const [agent, reply] = [this.agents.get(job.id), this.replies.get(job.id)];
     this.forgetJob(job.id);
+    if (agent) this.agents.set(job.id, agent);
+    if (reply) this.replies.set(job.id, reply);
     this.host.untrackJob(job.id);
     this.paneNames.set(job.id, name);
     tab.root = this.placeNew(tab, job.id, undefined);
@@ -415,7 +422,8 @@ export class Workspace {
   private dispatchKey(key: InputKey): boolean {
     this.message = undefined;
     const consumed = this.routeKey(key);
-    const shown = this.popup?.kind === "job" ? this.popup.id : this.popup ? undefined : this.tabs[this.active]?.focused;
+    const shown = this.peeking ? undefined : this.popup?.kind === "job" ? this.popup.id : this.popup ? undefined : this.tabs[this.active]?.focused;
+    this.peeking = false;
     if (shown !== undefined) this.seeReply(shown);
     if (!consumed && !this.popup) this.acknowledge(this.tab.focused);
     else if (!consumed && this.popup?.kind === "job") this.acknowledge(this.popup.id);
@@ -434,9 +442,22 @@ export class Workspace {
       return;
     }
     const [id, reply] = target;
-    this.host.peekReply(id, `${this.paneNames.get(id) ?? "Claude"} · ${this.tabOf(id)!.name}`, reply.text);
+    const tab = this.tabOf(id)!;
+    this.active = this.tabs.indexOf(tab);
+    for (const popup of this.popups.filter((candidate) => candidate.tabId === tab.id && candidate.kind === "job")) this.popupExited(popup.id);
+    this.peeking = true;
+    this.host.peekReply(id, `${this.paneNames.get(id) ?? "Claude"} · ${tab.name}`, reply.text);
     reply.unread = false;
     this.acknowledge(id);
+  }
+
+  private replyToasts(): Reply[] {
+    return this.toasts().flatMap((toast) => (toast.kind === "reply" ? [toast.reply] : []));
+  }
+
+  private dismissReply(): void {
+    const oldest = this.replyToasts()[0];
+    if (oldest) oldest.unread = false;
   }
 
   private acknowledge(id: PaneId): void {
@@ -469,6 +490,7 @@ export class Workspace {
     }
     if (popup && this.mode === "normal" && !passthrough.has(keyName(key))) return false;
     const binding = lookup(this.mode, key);
+    if (binding?.command.type === "dismiss-reply" && this.replyToasts().length === 0) return false;
     if (binding) {
       const before = `${this.active}:${this.tab.focused}`;
       const mode = this.mode;
@@ -646,6 +668,8 @@ export class Workspace {
         return this.jumpToAttention();
       case "peek-reply":
         return this.peekReply();
+      case "dismiss-reply":
+        return this.dismissReply();
       case "toggle-job": {
         const popup = this.popup;
         if (popup?.kind === "job") return this.popupExited(popup.id);
@@ -769,6 +793,9 @@ export class Workspace {
     for (const id of paneIds(this.tab.root)) {
       this.host.destroy(id);
       this.paneNames.delete(id);
+      this.agents.delete(id);
+      this.replies.delete(id);
+      this.commands.delete(id);
     }
     this.removeTab(index);
   }

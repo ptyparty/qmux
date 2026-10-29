@@ -971,6 +971,24 @@ describe("Workspace", () => {
       expect(workspace.popup).toBeUndefined();
     });
 
+    test("Alt p switches to the reply's tab, and Alt x dismisses the oldest reply toast", () => {
+      const clock = { now: 0 };
+      const { host, workspace } = ide(clock);
+      const merlin = workspace.tab;
+      const agent = merlin.focused;
+      const other = paneIds(merlin.root).find((id) => id !== agent)!;
+      press(workspace, "ctrl+t", "c");
+      workspace.setAgentState(agent, "done", "first");
+      clock.now = 10;
+      workspace.setAgentState(other, "done", "second");
+      press(workspace, "alt+x");
+      expect(workspace.toasts()).toMatchObject([{ kind: "reply", id: other }]);
+      press(workspace, "alt+p");
+      expect(workspace.tab).toBe(merlin);
+      expect(host.peeked.map(([id]) => id)).toEqual([other]);
+      expect(press(workspace, "alt+x")).toEqual([false]);
+    });
+
     test("an agent's reply is unread until its pane is seen or peeked at", () => {
       const { host, workspace } = ide({ now: 5 });
       const agent = workspace.tab.focused;

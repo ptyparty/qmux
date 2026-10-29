@@ -53,6 +53,8 @@ Usage:
   qmux hook
       Claude Code hook: reads the hook's JSON on stdin and reports the agent's state to qmux.
       Permission requests become a popup in the agent's tab. Does nothing outside qmux.
+  qmux peek spec.json --pane ID
+      Show an agent's reply (what Alt p opens); choosing "Go to it" shows pane ID.
   qmux hooks [--install]
       List the Claude Code hooks qmux needs that are missing from your settings, or add them.
   qmux hook --wake
@@ -80,6 +82,8 @@ async function main(argv: string[]): Promise<void> {
       return print(z.toJSONSchema(formSpec));
     case "mcp":
       return (await import("./mcp/server.ts")).serveStdio();
+    case "peek":
+      return peekCommand(rest);
     case "hooks":
       return hooksCommand(rest);
     case "hook":
@@ -195,6 +199,17 @@ async function hookCommand(): Promise<void> {
     console.error(`qmux hook: ${(error as Error).message}`);
   }
   process.exit(0);
+}
+
+async function peekCommand(args: string[]): Promise<void> {
+  const { values, positionals } = parse(args, { pane: { type: "string" } });
+  const [source] = positionals;
+  if (!source) throw new UsageError("qmux peek needs a spec file");
+  const result = await (await import("./form/show.ts")).showForm(await readSpec(source), async () => {});
+  const paneId = Number(values.pane);
+  const socket = process.env.QMUX_SOCKET;
+  if (result.status !== "submitted" || result.values.next !== "go" || !socket || !Number.isInteger(paneId)) return;
+  await sendControl(socket, { method: "pane.focus", params: { paneId } }).catch(() => undefined);
 }
 
 async function hooksCommand(args: string[]): Promise<void> {

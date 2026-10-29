@@ -204,8 +204,9 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       const tabId = workspace.tabOf(near)?.id;
       if (tabId === undefined) return;
       const spec = join(tabDirs.tabDir(tabId), `peek-${near}.json`);
-      void Bun.write(spec, JSON.stringify({ title, elements: [{ type: "markdown", text }], submitLabel: "Done" })).then(() => {
-        openViewPopup(near, [...selfCommand(), "form", spec], title, { width: 80, height: 80 });
+      const next = { type: "choice", id: "next", label: "Then", other: false, default: "done", options: [{ value: "done", label: "Done" }, { value: "go", label: "Go to it", description: "show the agent's pane or job" }] };
+      void Bun.write(spec, JSON.stringify({ title, elements: [{ type: "markdown", text }, next], submitLabel: "OK" })).then(() => {
+        openViewPopup(near, [...selfCommand(), "peek", spec, "--pane", String(near)], title, { width: 80, height: 80 }, true);
         refresh();
       });
     },
@@ -265,11 +266,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     refresh();
   };
 
-  const openViewPopup = (near: PaneId, command: string[], title: string, size: PopupSize | undefined): PaneId | undefined => {
+  const openViewPopup = (near: PaneId, command: string[], title: string, size: PopupSize | undefined, frameless = false): PaneId | undefined => {
     const tabId = workspace.tabOf(near)?.id;
     if (tabId === undefined) return undefined;
     const id = workspace.reservePaneId();
-    spawnPane(id, host.cwd(near), command, (exited) => workspace.popupExited(exited), { holdOnFailure: true, tabId });
+    spawnPane(id, host.cwd(near), command, (exited) => workspace.popupExited(exited), { holdOnFailure: true, tabId, frameless });
     workspace.openViewPopup(id, title, near, size);
     refresh();
     return id;

@@ -370,6 +370,10 @@ export class MuxView {
     const { prompt, message, mode } = this.workspace;
     if (prompt) return styled(hintParts(mode, [{ keys: "Enter", description: "confirm" }, { keys: "Esc", description: "cancel" }]));
     if (message) return styled([" ", fg(theme.warning)(message)]);
+    const hidden = this.workspace.hiddenAsks().length;
+    if (hidden > 0 && !this.workspace.popup) {
+      return styled([" ", fg(theme.warning)(hidden === 1 ? "A question is waiting" : `${hidden} questions are waiting`), fg(theme.muted)(" · "), bold(fg(theme.accent)("Alt j")), fg(theme.muted)(" show it")]);
+    }
     if (this.workspace.popupWaitMs() !== undefined) {
       return styled([" ", fg(theme.warning)("A question is waiting"), fg(theme.muted)(" · it opens when you pause typing · "), bold(fg(theme.accent)("Alt a")), fg(theme.muted)(" open now")]);
     }

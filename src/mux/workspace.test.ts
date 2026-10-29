@@ -988,7 +988,7 @@ describe("Workspace", () => {
     test("Alt j hides the open job, running or finished, and reopens the last one", () => {
       const { workspace } = ide({ now: 0 });
       press(workspace, "alt+j");
-      expect(workspace.message).toBe("No job to reopen");
+      expect(workspace.message).toBe("No job or question to reopen");
       const job = workspace.runJob(2, ["make"])!;
       press(workspace, "ctrl+s", "return");
       expect(workspace.popup).toMatchObject({ id: job, kind: "job" });
@@ -1050,6 +1050,23 @@ describe("Workspace", () => {
       expect(workspace.jobs).toEqual([]);
       expect(workspace.tab.name).toBe(first);
     });
+  });
+
+  test("Alt j hides an open question and brings it back; Alt a shows it too", () => {
+    const workspace = new Workspace(new FakeHost());
+    workspace.openPopup(50, "Deploy?");
+    expect(workspace.popup?.id).toBe(50);
+    press(workspace, "alt+j");
+    expect(workspace.popup).toBeUndefined();
+    expect(workspace.hiddenAsks().map((popup) => popup.id)).toEqual([50]);
+    expect(workspace.tabAttention(workspace.tab)).toBe("waiting");
+    expect(press(workspace, "x")).toEqual([false]);
+    press(workspace, "alt+j");
+    expect(workspace.popup?.id).toBe(50);
+    press(workspace, "alt+j", "alt+a");
+    expect(workspace.popup?.id).toBe(50);
+    workspace.popupExited(50);
+    expect(workspace.hiddenAsks()).toEqual([]);
   });
 
   test("Alt c messages the focused native Claude, or the tab's first one", () => {

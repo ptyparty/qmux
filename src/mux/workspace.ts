@@ -6,7 +6,7 @@ import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } 
 export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean; layoutJobs: JobSpec[]; layoutRuns: Map<number, PaneId>; cwd?: string };
 
 export type PopupSize = { width: number; height: number };
-export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view" | "job"; askingPane?: PaneId; size?: PopupSize };
+export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view" | "job"; askingPane?: PaneId; size?: PopupSize; hidden?: boolean };
 
 export type JobState = "running" | "succeeded" | "failed";
 export type Job = { id: PaneId; tabId: number; name: string; command?: string[]; state: JobState; code?: number | null; started: number; finished?: number; seen: boolean; agent?: boolean; dock: boolean; layout?: boolean };
@@ -62,6 +62,7 @@ export type InputKey = Key & { sequence: string };
 
 const popupPassthrough = new Set(["ctrl+t", "ctrl+o"]);
 const jobPopupPassthrough = new Set([...popupPassthrough, "ctrl+s", "alt+j"]);
+const askPopupPassthrough = new Set([...popupPassthrough, "alt+j"]);
 
 export class Workspace {
   tabs: Tab[] = [];
@@ -112,15 +113,19 @@ export class Workspace {
   get popup(): Popup | undefined {
     const view = this.popups.find((candidate) => candidate.tabId === this.tab.id && candidate.kind !== "ask");
     if (view) return view;
-    const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id);
+    const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id && !candidate.hidden);
     if (!popup) return undefined;
     if (!this.shownPopups.has(popup.id) && this.popupDelayLeft(popup) > 0) return undefined;
     this.shownPopups.add(popup.id);
     return popup;
   }
 
+  hiddenAsks(tab: Tab = this.tab): Popup[] {
+    return this.popups.filter((popup) => popup.tabId === tab.id && popup.kind === "ask" && popup.hidden);
+  }
+
   popupWaitMs(): number | undefined {
-    const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id);
+    const popup = this.popups.find((candidate) => candidate.tabId === this.tab.id && !candidate.hidden);
     if (!popup || popup.kind !== "ask" || this.shownPopups.has(popup.id)) return undefined;
     return Math.max(this.popupDelayLeft(popup), 0);
   }
@@ -413,6 +418,7 @@ export class Workspace {
       return;
     }
     this.active = done.index;
+    if (asking.has(done.id)) for (const ask of this.hiddenAsks()) ask.hidden = false;
     if (!this.jobStatus(done.id)) this.tab.focused = done.id;
     else if (!asking.has(done.id)) {
       this.openJob(done.id);
@@ -480,7 +486,7 @@ export class Workspace {
       return true;
     }
     const popup = this.popup;
-    const passthrough = popup?.kind === "job" ? jobPopupPassthrough : popupPassthrough;
+    const passthrough = popup?.kind === "job" ? jobPopupPassthrough : popup?.kind === "ask" ? askPopupPassthrough : popupPassthrough;
     const finishedJob = popup?.kind === "job" && this.jobStatus(popup.id)?.state !== "running";
     if (finishedJob && this.mode === "normal" && !passthrough.has(keyName(key))) {
       return this.finishedJobKey(popup!.id, key);
@@ -675,8 +681,18 @@ export class Workspace {
       case "toggle-job": {
         const popup = this.popup;
         if (popup?.kind === "job") return this.popupExited(popup.id);
+        if (popup?.kind === "ask") {
+          popup.hidden = true;
+          return;
+        }
+        const hidden = this.hiddenAsks().at(-1);
+        if (hidden) {
+          hidden.hidden = false;
+          this.shownPopups.add(hidden.id);
+          return;
+        }
         if (this.lastJob !== undefined && this.jobStatus(this.lastJob)) return this.openJob(this.lastJob);
-        this.message = "No job to reopen";
+        this.message = "No job or question to reopen";
         return;
       }
       case "compose-claude":

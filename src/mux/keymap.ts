@@ -88,7 +88,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "Alt a", description: "next agent needing you" },
       { keys: "Alt c", description: "message Claude" },
       { keys: "Alt p", description: "peek at a reply" },
-      { keys: "Alt j", description: "hide or reopen a job" },
+      { keys: "Alt j", description: "hide or reopen a job or question" },
     ],
   },
   locked: {

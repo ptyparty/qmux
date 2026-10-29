@@ -74,14 +74,16 @@ export class AskStore {
   }
 
   async wait(id: string, timeoutMs: number, pollMs = 150): Promise<AskStatus> {
+    const status = await this.settled(id, { timeoutMs, pollMs });
+    if (status.status !== "pending") this.claim(id);
+    return status;
+  }
+
+  async settled(id: string, { timeoutMs = Number.POSITIVE_INFINITY, pollMs = 150, signal }: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal } = {}): Promise<AskStatus> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
       const status = await this.status(id);
-      if (status.status !== "pending") {
-        this.claim(id);
-        return status;
-      }
-      if (Date.now() >= deadline) return status;
+      if (status.status !== "pending" || Date.now() >= deadline || signal?.aborted) return status;
       await Bun.sleep(Math.min(pollMs, Math.max(deadline - Date.now(), 0)));
     }
   }

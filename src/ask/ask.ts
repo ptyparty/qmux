@@ -11,6 +11,11 @@ export type AskOptions = { owner?: AskOwner; signal?: AbortSignal };
 export async function ask(store: AskStore, spec: FormSpec, host: HostName, waitMs: number, options: AskOptions = { owner: askOwner(process.env) }): Promise<AskOutcome> {
   const resolved = resolveHost(host);
   const meta = await store.create(resolveImagePaths(spec, process.cwd()), resolved, options.owner);
+  if (options.signal?.aborted) {
+    const status: AskStatus = { status: "cancelled" };
+    await store.complete(meta.id, status);
+    return { id: meta.id, launch: { host: resolved, message: "Withdrawn before it was shown" }, status };
+  }
   let launch: Launch;
   try {
     launch = await launchForm(resolved, meta.id, spec.title, store.root);
@@ -47,22 +52,16 @@ export async function answer(store: AskStore, id: string): Promise<AskStatus> {
   const { showForm } = await import("../form/show.ts");
   const answered = new AbortController();
   const done = new AbortController();
-  void watchForAnswer(store, id, answered, done.signal);
+  void store.settled(id, { pollMs: 300, signal: done.signal }).then(
+    (status) => status.status !== "pending" && answered.abort(),
+    () => {},
+  );
   const result = await showForm(await store.spec(id), () => store.complete(id, { status: "cancelled" }), answered.signal);
   done.abort();
   if (answered.signal.aborted) return store.status(id);
   if (await store.complete(id, result)) return result;
   const recorded = await store.status(id);
   return notice(`Your answer was not recorded: this question was already ${recorded.status} in another window.`, recorded);
-}
-
-async function watchForAnswer(store: AskStore, id: string, answered: AbortController, done: AbortSignal): Promise<void> {
-  while (!done.aborted) {
-    await Bun.sleep(300);
-    if (done.aborted) return;
-    const status = await store.status(id).catch(() => undefined);
-    if (status && status.status !== "pending") return answered.abort();
-  }
 }
 
 async function notice(message: string, status: AskStatus): Promise<AskStatus> {

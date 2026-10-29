@@ -84,6 +84,18 @@ describe("AskStore", () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  test("settled stops polling once its signal is aborted, and leaves the result unseen", async () => {
+    const owner = { socket: "/run/qmux.sock", paneId: 3 };
+    const { id } = await store.create(spec, "none", owner);
+    const stop = new AbortController();
+    const settled = store.settled(id, { pollMs: 10, signal: stop.signal });
+    stop.abort();
+    expect(await settled).toEqual({ status: "pending" });
+    await store.complete(id, { status: "cancelled" });
+    expect(await store.settled(id)).toEqual({ status: "cancelled" });
+    expect((await store.claimUnseen(owner)).map(({ meta }) => meta.id)).toEqual([id]);
+  });
+
   test("unknown or malformed ids are rejected", async () => {
     await expect(store.status("abc-00000000")).rejects.toThrow(UnknownAskError);
     await expect(store.status("../../etc")).rejects.toThrow(UnknownAskError);

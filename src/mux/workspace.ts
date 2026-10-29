@@ -77,6 +77,7 @@ export class Workspace {
   readonly popups: Popup[] = [];
   readonly agents = new Map<PaneId, AgentState>();
   readonly replies = new Map<PaneId, Reply>();
+  readonly activities = new Map<PaneId, string>();
   private readonly hideOnReply = new Set<PaneId>();
   private lastJob: PaneId | undefined;
   private peeking = false;
@@ -296,6 +297,7 @@ export class Workspace {
     this.paneNames.delete(id);
     this.agents.delete(id);
     this.replies.delete(id);
+    this.activities.delete(id);
     this.commands.delete(id);
     this.selectedJob = Math.max(Math.min(this.selectedJob, this.tabJobs().length - 1), 0);
   }

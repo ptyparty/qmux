@@ -8,6 +8,7 @@ import { declineHooks, defaultHookCommand, hooksDeclined, installHooks, missingH
 import { pick } from "./picker.ts";
 import { pastSessions, pickerItems, projectDir, runningSessions, sessionIds, type Choice, type LiveSession } from "./sessions.ts";
 import { ClaudeSession } from "./session.ts";
+import type { Entry } from "./transcript.ts";
 import { ClaudeView, composeKeyBindings } from "./view.ts";
 
 export async function runClaude(args: string[], options: { pick: boolean }): Promise<void> {
@@ -36,7 +37,17 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   const signals = ["SIGHUP", "SIGTERM", "SIGINT"] as const;
   for (const signal of signals) process.on(signal, quit);
   try {
-    session = new ClaudeSession({ cwd: process.cwd(), args, env: process.env, decide: decidePermission, onChange: () => view?.render() });
+    const report = activityReporter();
+    session = new ClaudeSession({
+      cwd: process.cwd(),
+      args,
+      env: process.env,
+      decide: decidePermission,
+      onChange: () => {
+        view?.render();
+        if (session) report(session.transcript.entries);
+      },
+    });
     view = new ClaudeView(renderer, session, () => quit());
     view.render();
     const target = session;
@@ -103,6 +114,32 @@ async function liveSessions(): Promise<LiveSession[]> {
     if (!(error instanceof ControlError)) throw error;
     return [];
   }
+}
+
+export function latestActivity(entries: readonly Entry[]): string | undefined {
+  const last = entries.at(-1);
+  if (last?.kind === "tool") return `▸ ${last.name}  ${last.summary}`;
+  if (last?.kind === "text") return last.text.split("\n").map((line) => line.trim()).filter(Boolean).at(-1);
+  return undefined;
+}
+
+function activityReporter(intervalMs = 250): (entries: readonly Entry[]) => void {
+  const { QMUX_SOCKET: control, QMUX_PANE_ID: pane } = process.env;
+  const paneId = Number(pane);
+  let sent: string | undefined;
+  let pending: string | undefined;
+  let timer: Timer | undefined;
+  const flush = () => {
+    timer = undefined;
+    if (pending === undefined || pending === sent) return;
+    sent = pending;
+    void sendControl(control!, { method: "agent.activity", params: { paneId, text: pending } }, 1000).catch(() => undefined);
+  };
+  return (entries) => {
+    if (!control || !Number.isInteger(paneId)) return;
+    pending = latestActivity(entries);
+    timer ??= setTimeout(flush, intervalMs);
+  };
 }
 
 async function showIfJob(): Promise<void> {

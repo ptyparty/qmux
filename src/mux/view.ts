@@ -141,7 +141,8 @@ export class MuxView {
       const state = this.workspace.agents.get(job.id);
       if (job.agent) {
         const reply = this.workspace.replies.get(job.id);
-        const text = reply ? firstLine(reply.text, room) : fit(state ? agentLabels[state] : "ready", room);
+        const activity = state === "working" ? this.workspace.activities.get(job.id) : undefined;
+        const text = activity ? fit(activity, room) : reply ? firstLine(reply.text, room) : fit(state ? agentLabels[state] : "ready", room);
         const color = state ? agentColors[state] : theme.muted;
         return [bold(fg(color)(` ${state ? agentBadges[state] : "🧠"} ${name}`)), fg(theme.muted)(" │ "), fg(theme.text)(text)];
       }

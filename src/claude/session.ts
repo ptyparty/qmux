@@ -1,5 +1,5 @@
 import { filterEscalatingDefaultMode, query, resolveSettings, type PermissionResult as SdkPermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { claudeExited } from "../hooks/hook.ts";
+import { claudeExited, claudeInterrupted } from "../hooks/hook.ts";
 import type { PermissionRequest, PermissionResult } from "./permissions.ts";
 import { modeArgument, nextMode, parseCommands, parseMode, permissionModes, type PermissionMode, type SlashCommand } from "./commands.ts";
 import { claudeOptions } from "./options.ts";
@@ -76,6 +76,7 @@ export class ClaudeSession {
   interrupt(): void {
     this.interrupted = true;
     this.transcript.interrupt();
+    for (const ask of this.asking) ask.abort(claudeInterrupted);
     this.query.interrupt().catch(() => {});
   }
 
@@ -145,7 +146,7 @@ export class ClaudeSession {
       .catch((error: Error) => ({ behavior: "deny", message: `qmux couldn't ask the user: ${error.message}` }));
     this.asking.delete(ask);
     if (signal.aborted) {
-      this.transcript.permissionAnswered(id, "cancelled");
+      this.transcript.permissionAnswered(id, signal.reason === claudeInterrupted ? "dismissed" : "cancelled");
       this.options.onChange();
       return { behavior: "deny", message: "Withdrawn" };
     }

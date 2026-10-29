@@ -9,7 +9,7 @@ export const controlRequest = z.discriminatedUnion("method", [
   z.object({ method: z.literal("project.open"), params: z.object({ target: z.string().min(1) }) }),
   z.object({
     method: z.literal("agent.state"),
-    params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional() }),
+    params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional(), sessionId: z.string().min(1).optional(), reply: z.string().optional() }),
   }),
   z.object({
     method: z.literal("pane.open"),
@@ -23,6 +23,21 @@ export const controlRequest = z.discriminatedUnion("method", [
       height: z.number().min(10).max(100).optional().describe("Popup height, percent of the screen"),
     }),
   }),
+  z.object({
+    method: z.literal("job.run"),
+    params: z.object({ command: z.array(z.string()).min(1), near: z.number().int(), name: z.string().optional(), cwd: z.string().optional(), env: z.record(z.string(), z.string()).optional() }),
+  }),
+  z.object({ method: z.literal("job.status"), params: z.object({ jobId: z.number().int() }) }),
+  z.object({ method: z.literal("job.stop"), params: z.object({ jobId: z.number().int() }) }),
+  z.object({ method: z.literal("agent.session"), params: z.object({ paneId: z.number().int(), sessionId: z.string().min(1) }) }),
+  z.object({ method: z.literal("claude.sessions") }),
+  z.object({ method: z.literal("agent.activity"), params: z.object({ paneId: z.number().int(), text: z.string() }) }),
+  z.object({ method: z.literal("agent.command"), params: z.object({ paneId: z.number().int(), command: z.string(), background: z.boolean() }) }),
+  z.object({ method: z.literal("pane.focus"), params: z.object({ paneId: z.number().int(), closing: z.number().int().optional(), onlyJob: z.boolean().optional() }) }),
+  z.object({ method: z.literal("claude.register"), params: z.object({ paneId: z.number().int(), socket: z.string().min(1).nullable(), dormant: z.boolean().optional() }) }),
+  z.object({ method: z.literal("claude.compose"), params: z.object({ paneId: z.number().int() }) }),
+  z.object({ method: z.literal("agent.prompt"), params: z.object({ paneId: z.number().int(), text: z.string().min(1) }) }),
+  z.object({ method: z.literal("job.hide"), params: z.object({ jobId: z.number().int() }) }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),
 ]);

@@ -1,20 +1,29 @@
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ask, askOwner } from "../ask/ask.ts";
+import { selfCommand, shellQuote } from "../ask/hosts.ts";
 import { AskStore, type AskOwner, type AskStatus, type UnseenResult } from "../ask/store.ts";
 import type { FormSpec } from "../form/schema.ts";
 import { ControlError, sendControl, type ControlRequest } from "../mux/control.ts";
 import { attachedPaneEnv } from "./attached.ts";
 
-export type HookInput = { hook_event_name?: string; message?: string; notification_type?: string; [key: string]: unknown };
+export type HookInput = { hook_event_name?: string; message?: string; notification_type?: string; last_assistant_message?: unknown; [key: string]: unknown };
 
 type AgentStateRequest = Extract<ControlRequest, { method: "agent.state" }>;
 type AgentStateName = AgentStateRequest["params"]["state"];
 
-export function stateForEvent(input: HookInput): { state: AgentStateName; detail?: string } | undefined {
+type StateUpdate = { state: AgentStateName; detail?: string; reply?: string; sessionId?: string };
+
+const maxReply = 8000;
+
+export function stateForEvent(input: HookInput): StateUpdate | undefined {
   switch (input.hook_event_name) {
     case "UserPromptSubmit":
       return { state: "working" };
-    case "Stop":
-      return { state: "done" };
+    case "Stop": {
+      const reply = typeof input.last_assistant_message === "string" && input.last_assistant_message.trim() ? input.last_assistant_message.slice(0, maxReply) : undefined;
+      return { state: "done", reply };
+    }
     case "SessionEnd":
       return { state: "clear" };
     case "Notification": {
@@ -41,8 +50,8 @@ export type PermissionInput = {
 
 const maxShown = 600;
 
-export function permissionForm(input: PermissionInput): FormSpec {
-  const always = input.permission_suggestions?.[0];
+export function permissionForm(input: PermissionInput, self: string[] = selfCommand()): FormSpec {
+  const always = runsAsJob(input.tool_input.command, self) ? undefined : input.permission_suggestions?.[0];
   const description = typeof input.tool_input.description === "string" ? input.tool_input.description : undefined;
   return {
     title: `Allow ${input.tool_name}?`,
@@ -87,9 +96,18 @@ export function permissionDecision(input: PermissionInput, answer: PermissionAns
   }
 }
 
-export async function askPermission(pane: AskOwner, input: PermissionInput): Promise<object | undefined> {
-  const values = submitted(await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`));
+export type AskStyle = { stopOnDismiss?: boolean };
+
+export async function askPermission(pane: AskOwner, input: PermissionInput, style: AskStyle = {}): Promise<object | undefined> {
+  const status = await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`);
+  if (style.stopOnDismiss && status?.status === "cancelled") return dismissed(pane, "The user dismissed the permission request.");
+  const values = submitted(status);
   return values && permissionDecision(input, values);
+}
+
+async function dismissed(pane: AskOwner, message: string): Promise<object> {
+  await reportState(pane, "done");
+  return { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", message, interrupt: true } } };
 }
 
 export type PlanInput = { hook_event_name: "PermissionRequest"; tool_name: "ExitPlanMode"; tool_input: { plan?: unknown; [key: string]: unknown } };
@@ -182,10 +200,12 @@ export function questionAnswers(questions: ClaudeQuestion[], values: Record<stri
   return answers;
 }
 
-export async function askQuestions(pane: AskOwner, input: QuestionInput): Promise<object | undefined> {
+export async function askQuestions(pane: AskOwner, input: QuestionInput, style: AskStyle = {}): Promise<object | undefined> {
   const questions = input.tool_input.questions ?? [];
   if (questions.length === 0) return undefined;
-  const values = submitted(await askInPopup(pane, questionForm(questions), "Claude has a question"));
+  const status = await askInPopup(pane, questionForm(questions), "Claude has a question");
+  if (style.stopOnDismiss && status?.status === "cancelled") return dismissed(pane, "The user dismissed the question.");
+  const values = submitted(status);
   if (!values) return undefined;
   return {
     hookSpecificOutput: {
@@ -196,8 +216,39 @@ export async function askQuestions(pane: AskOwner, input: QuestionInput): Promis
   };
 }
 
+export type BashInput = { hook_event_name: "PreToolUse"; tool_name: "Bash"; tool_input: { command?: unknown; description?: unknown; run_in_background?: unknown; [key: string]: unknown } };
+
+async function commandRefusal(pane: AskOwner, input: BashInput): Promise<string | undefined> {
+  const { command, run_in_background } = input.tool_input;
+  if (typeof command !== "string") return undefined;
+  try {
+    const response = await sendControl(pane.socket, { method: "agent.command", params: { paneId: pane.paneId, command, background: run_in_background === true } }, 300);
+    const refusal = response.ok ? (response.result as { refusal?: unknown } | undefined)?.refusal : undefined;
+    return typeof refusal === "string" ? refusal : undefined;
+  } catch (error) {
+    if (!(error instanceof ControlError)) throw error;
+    return undefined;
+  }
+}
+
+export function backgroundAsJob(input: BashInput, self: string[]): object | undefined {
+  const { command, description, run_in_background } = input.tool_input;
+  if (run_in_background !== true || typeof command !== "string" || /^\s*qmux\s+job\b/.test(command)) return undefined;
+  const name = typeof description === "string" && description.trim() ? description.trim() : command;
+  const job = shellQuote([...jobRun(self), "--wait", "--name", name, "--", "bash", "-c", command]);
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { ...input.tool_input, command: job } } };
+}
+
+function jobRun(self: string[]): string[] {
+  return [...self, "job", "run"];
+}
+
+function runsAsJob(command: unknown, self: string[]): boolean {
+  return typeof command === "string" && command.startsWith(`${shellQuote(jobRun(self))} `);
+}
+
 async function askInPopup(pane: AskOwner, spec: FormSpec, waitingFor: string): Promise<AskStatus | undefined> {
-  await reportState(pane, "waiting", waitingFor);
+  await reportState(pane, "waiting", { detail: waitingFor });
   let outcome;
   try {
     outcome = await ask(new AskStore(), spec, "qmux", Number.POSITIVE_INFINITY, {});
@@ -225,12 +276,24 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     return undefined;
   }
   let pane = askOwner(env);
+  if (input.hook_event_name === "PreToolUse" && input.tool_name === "Bash") {
+    const attached = pane ? undefined : attachedPaneEnv(input.session_id, procDir);
+    const owner = pane ?? (attached && askOwner(attached));
+    const refusal = owner && (await commandRefusal(owner, input as unknown as BashInput));
+    if (refusal) return JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: refusal } });
+    const job = pane && backgroundAsJob(input as unknown as BashInput, selfCommand());
+    return job && JSON.stringify(job);
+  }
   if (!pane) {
     const attached = attachedPaneEnv(input.session_id, procDir);
     pane = attached && askOwner(attached);
     if (!pane) return undefined;
     Object.assign(process.env, attached);
   }
+  const session = sessionForEvent(input);
+  if (session && input.hook_event_name === "SessionStart") await reportSession(pane, session);
+  const asksUser = input.hook_event_name === "PermissionRequest" || (input.hook_event_name === "PreToolUse" && input.tool_name === "AskUserQuestion");
+  if (asksUser && env.QMUX_NATIVE_CLAUDE) return undefined;
   if (input.hook_event_name === "PermissionRequest" && input.tool_name === "ExitPlanMode") {
     const decision = await askPlan(pane, input as unknown as PlanInput);
     return decision ? JSON.stringify(decision) : undefined;
@@ -244,12 +307,49 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
     return answer ? JSON.stringify(answer) : undefined;
   }
   const update = stateForEvent(input);
-  if (update) await reportState(pane, update.state, update.detail);
+  if (update) await reportState(pane, update.state, { ...update, sessionId: session });
   if (input.hook_event_name === "UserPromptSubmit") {
     const notice = unseenNotice(await new AskStore().claimUnseen(pane));
     return notice && JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: notice } });
   }
   return undefined;
+}
+
+export async function waitForAnswers(env: Record<string, string | undefined>, input: HookInput, store = new AskStore(), pollMs = 500, maxMs = 12 * 3_600_000): Promise<string | undefined> {
+  const attached = askOwner(env) ? undefined : attachedPaneEnv(input.session_id);
+  const pane = askOwner(env) ?? (attached && askOwner(attached));
+  if (!pane) return undefined;
+  const lock = join(store.root, `wake-${pane.server ?? "any"}-${pane.paneId}.pid`);
+  replaceWaiter(lock);
+  const deadline = Date.now() + maxMs;
+  try {
+    for (;;) {
+      const open = await store.pending(pane);
+      const notice = unseenNotice(await store.claimUnseen(pane));
+      if (notice) return notice;
+      if (open.length === 0 || Date.now() >= deadline || !ownsLock(lock)) return undefined;
+      await Bun.sleep(pollMs);
+    }
+  } finally {
+    if (ownsLock(lock)) rmSync(lock, { force: true });
+  }
+}
+
+function replaceWaiter(lock: string): void {
+  try {
+    const previous = Number(readFileSync(lock, "utf8"));
+    const command = readFileSync(`/proc/${previous}/cmdline`, "utf8").split("\0");
+    if (previous !== process.pid && command.includes("hook") && command.includes("--wake")) process.kill(previous, "SIGTERM");
+  } catch {}
+  writeFileSync(lock, String(process.pid));
+}
+
+function ownsLock(lock: string): boolean {
+  try {
+    return Number(readFileSync(lock, "utf8")) === process.pid;
+  } catch {
+    return false;
+  }
 }
 
 export function unseenNotice(unseen: UnseenResult[]): string | undefined {
@@ -262,7 +362,7 @@ export function unseenNotice(unseen: UnseenResult[]): string | undefined {
   return ["qmux forms you opened were closed since you last checked on them:", ...lines].join("\n");
 }
 
-function summarizeToolInput(toolInput: Record<string, unknown>): string {
+export function summarizeToolInput(toolInput: Record<string, unknown>): string {
   const preferred = ["command", "file_path", "path", "url", "pattern", "query"].find((key) => typeof toolInput[key] === "string");
   const text = preferred ? String(toolInput[preferred]) : JSON.stringify(toolInput, null, 2);
   return text.length > maxShown ? `${text.slice(0, maxShown)}…` : text;
@@ -274,9 +374,23 @@ function describeSuggestion(suggestion: PermissionSuggestion): string {
   return `${rules.join(", ") || suggestion.type}${where}`;
 }
 
-export async function reportState(pane: AskOwner, state: AgentStateName, detail?: string): Promise<void> {
+export function sessionForEvent(input: HookInput): string | undefined {
+  const tracked = ["SessionStart", "UserPromptSubmit", "SessionEnd"].includes(String(input.hook_event_name));
+  return tracked && typeof input.session_id === "string" && input.session_id ? input.session_id : undefined;
+}
+
+async function reportSession(pane: AskOwner, sessionId: string): Promise<void> {
   try {
-    await sendControl(pane.socket, { method: "agent.state", params: { paneId: pane.paneId, state, detail } }, 1000);
+    await sendControl(pane.socket, { method: "agent.session", params: { paneId: pane.paneId, sessionId } }, 1000);
+  } catch (error) {
+    if (!(error instanceof ControlError)) throw error;
+  }
+}
+
+export async function reportState(pane: AskOwner, state: AgentStateName, update: Omit<StateUpdate, "state"> = {}): Promise<void> {
+  const { detail, sessionId, reply } = update;
+  try {
+    await sendControl(pane.socket, { method: "agent.state", params: { paneId: pane.paneId, state, detail, sessionId, reply } }, 1000);
   } catch (error) {
     if (!(error instanceof ControlError)) throw error;
   }

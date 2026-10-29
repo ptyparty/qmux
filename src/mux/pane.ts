@@ -8,7 +8,7 @@ import { Pty, type ReadScheduler } from "./pty.ts";
 import { theme } from "./theme.ts";
 import { wordAt } from "./words.ts";
 
-export type CommandEvent = { kind: "started"; program?: string } | { kind: "finished"; code: number };
+export type CommandEvent = { kind: "started"; program?: string; commandLine?: string } | { kind: "finished"; code: number };
 
 export type PaneEvents = {
   onExit: (id: PaneId) => void;
@@ -17,6 +17,8 @@ export type PaneEvents = {
   onCommand?: (id: PaneId, event: CommandEvent) => void;
   onClipboard?: (id: PaneId, text: string) => void;
   onGraphics?: (id: PaneId, command: GraphicsCommand) => void;
+  onFinished?: (id: PaneId, code: number | null) => void;
+  onOutput?: (id: PaneId, data: Uint8Array) => void;
 };
 
 export type PaneOptions = {
@@ -26,6 +28,8 @@ export type PaneOptions = {
   holdOnExit?: boolean;
   holdOnFailure?: boolean;
   frameless?: boolean;
+  job?: boolean;
+  scrollbackBytes?: number;
 };
 
 const resetTerminal = "\x1bc";
@@ -61,6 +65,7 @@ export class Pane {
       width: "100%",
       height: "100%",
       selectable: true,
+      maxScrollback: options.scrollbackBytes,
       onMouseDown: (event) => this.clicked(event),
       onData: (data) => this.pty.write(data),
       onTerminalResize: (cols, rows) => {
@@ -84,6 +89,10 @@ export class Pane {
 
   owns(renderable: unknown): boolean {
     return renderable === this.view;
+  }
+
+  get code(): number | null | undefined {
+    return this.exitCode;
   }
 
   get exited(): boolean {
@@ -135,6 +144,14 @@ export class Pane {
     this.restartWith(undefined);
   }
 
+  settle(): void {
+    this.options.job = false;
+  }
+
+  type(data: string): void {
+    this.pty.write(data);
+  }
+
   kill(): void {
     this.pty.child.kill();
   }
@@ -161,6 +178,7 @@ export class Pane {
       scheduler: this.scheduler,
       onData: (data) => {
         this.view.write(data);
+        this.events.onOutput?.(this.id, data);
         if (this.events.onCommand) this.scanCommandMarks(data);
         for (const text of this.clipboard.scan(data)) this.events.onClipboard?.(this.id, text);
         if (this.events.onGraphics) for (const command of this.graphics.scan(data)) this.events.onGraphics(this.id, command);
@@ -181,7 +199,9 @@ export class Pane {
       if (pty !== this.pty) return;
       this.exitCode = code;
       const status = code === null ? "Exited" : `Exited with code ${code}`;
-      this.view.write(`\r\n\x1b[0m\x1b[2m[${status} · Enter re-run · Esc shell · Ctrl+c close]\x1b[0m`);
+      const keys = this.options.job ? "Enter re-run · p pane · x close · Esc hide" : "Enter re-run · Esc shell · Ctrl+c close";
+      this.view.write(`\r\n\x1b[0m\x1b[2m[${status} · ${keys}]\x1b[0m`);
+      this.events.onFinished?.(this.id, code);
       this.events.onHeld(this.id);
     });
   }
@@ -213,7 +233,7 @@ export class Pane {
     const text = this.markTail + Buffer.from(data).toString("latin1");
     for (const match of text.matchAll(commandMark)) {
       if (match.index! + match[0].length <= this.markTail.length) continue;
-      this.events.onCommand?.(this.id, match[1] === "C" ? { kind: "started", program: programOf(match[2]) } : { kind: "finished", code: Number(match[2] ?? 0) });
+      this.events.onCommand?.(this.id, match[1] === "C" ? { kind: "started", program: programOf(match[2]), commandLine: commandLineOf(match[2]) } : { kind: "finished", code: Number(match[2] ?? 0) });
     }
     this.markTail = text.slice(-markTailLength);
   }
@@ -245,16 +265,20 @@ export class ClipboardScanner {
 }
 
 export function programOf(params: string | undefined): string | undefined {
+  const commandLine = commandLineOf(params);
+  if (commandLine === undefined) return undefined;
+  const word = commandLine.trim().split(/\s+/).find((token) => !/^\w+=/.test(token));
+  return word ? basename(word) : undefined;
+}
+
+export function commandLineOf(params: string | undefined): string | undefined {
   const encoded = params?.match(/(?:^|;)cmdline_url=([^;]*)/)?.[1];
   if (encoded === undefined) return undefined;
-  let commandLine: string;
   try {
-    commandLine = decodeURIComponent(encoded);
+    return decodeURIComponent(encoded).trim();
   } catch {
     return undefined;
   }
-  const word = commandLine.trim().split(/\s+/).find((token) => !/^\w+=/.test(token));
-  return word ? basename(word) : undefined;
 }
 
 function shellCommand(): string[] {

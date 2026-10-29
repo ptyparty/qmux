@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskStore } from "../ask/store.ts";
 import { serveControl, type ControlRequest } from "../mux/control.ts";
-import { permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
+import { backgroundAsJob, sessionForEvent, waitForAnswers, permissionDecision, permissionForm, planDecision, planForm, questionAnswers, questionForm, runHook, stateForEvent, type ClaudeQuestion, type PermissionInput } from "./hook.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-hook-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -33,6 +33,14 @@ describe("qmux hook", () => {
     expect(stateForEvent({ hook_event_name: "Notification", notification_type: "idle_prompt" })).toMatchObject({ state: "done" });
     expect(stateForEvent({ hook_event_name: "Notification", notification_type: "auth_success" })).toBeUndefined();
     expect(stateForEvent({ hook_event_name: "SessionStart" })).toBeUndefined();
+  });
+
+  test("session starts, prompts and ends report which session the pane holds", () => {
+    expect(sessionForEvent({ hook_event_name: "SessionStart", session_id: "s1" })).toBe("s1");
+    expect(sessionForEvent({ hook_event_name: "UserPromptSubmit", session_id: "s1" })).toBe("s1");
+    expect(sessionForEvent({ hook_event_name: "SessionEnd", session_id: "s1" })).toBe("s1");
+    expect(sessionForEvent({ hook_event_name: "Stop", session_id: "s1" })).toBeUndefined();
+    expect(sessionForEvent({ hook_event_name: "SessionStart" })).toBeUndefined();
   });
 
   test("the permission form shows the command and offers the suggested rule", () => {
@@ -103,6 +111,20 @@ describe("qmux hook", () => {
     expect(requests).toEqual([{ method: "agent.state", params: { paneId: 7, state: "done" } }]);
   });
 
+  test("the wake hook waits for the pane's open form and returns its answer once", async () => {
+    const env = { QMUX_SOCKET: join(dir, "wake.sock"), QMUX_PANE_ID: "5" };
+    const store = new AskStore(join(dir, "wake-asks"));
+    expect(await waitForAnswers(env, {}, store, 5)).toBeUndefined();
+    const ask = await store.create({ title: "Deploy?", elements: [] }, "qmux", { socket: env.QMUX_SOCKET, paneId: 5 });
+    await store.create({ title: "Elsewhere", elements: [] }, "qmux", { socket: env.QMUX_SOCKET, paneId: 6 });
+    const woken = waitForAnswers(env, {}, store, 5);
+    await Bun.sleep(20);
+    await store.complete(ask.id, { status: "submitted", values: { go: true } });
+    expect(await woken).toContain(`"Deploy?" (${ask.id}) was answered: {"go":true}`);
+    expect(await waitForAnswers(env, {}, store, 5)).toBeUndefined();
+    expect(await waitForAnswers({}, {}, store, 5)).toBeUndefined();
+  });
+
   test("a prompt tells the agent about forms closed while it was not waiting", async () => {
     const env = { QMUX_SOCKET: join(dir, "missing.sock"), QMUX_PANE_ID: "9", QMUX_STATE_DIR: join(dir, "notice-state") };
     const previous = process.env.QMUX_STATE_DIR;
@@ -162,5 +184,31 @@ describe("qmux hook", () => {
     expect(requests[0]).toEqual({ method: "agent.state", params: { paneId: 7, state: "working" } });
     expect(requests[2]).toMatchObject({ params: { title: "Allow Bash?", paneId: 7 } });
     expect(owners).toEqual([undefined]);
+  });
+
+  test("native qmux Claude sessions answer their own permission requests and questions", async () => {
+    const env = { QMUX_SOCKET: "/nowhere", QMUX_PANE_ID: "7", QMUX_NATIVE_CLAUDE: "1" };
+    const request = { hook_event_name: "PermissionRequest", tool_name: "Write", tool_input: { file_path: "/a" } };
+    const question = { hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "Tea?", options: [{ label: "Yes" }] }] } };
+    expect(await runHook(JSON.stringify(request), env)).toBeUndefined();
+    expect(await runHook(JSON.stringify(question), env)).toBeUndefined();
+  });
+
+  test("Claude's background commands run as qmux jobs from a pane, and nowhere else", async () => {
+    const inPane = { QMUX_SOCKET: "/nowhere", QMUX_PANE_ID: "7" };
+    const tool_input = { command: "cd api && echo 'up'", description: "Start the API", run_in_background: true };
+    const background = { hook_event_name: "PreToolUse" as const, tool_name: "Bash" as const, tool_input };
+    expect(backgroundAsJob(background, ["qmux"])).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        updatedInput: { ...tool_input, command: `qmux job run --wait --name 'Start the API' -- bash -c 'cd api && echo '\\''up'\\'''` },
+      },
+    });
+    expect(JSON.parse((await runHook(JSON.stringify(background), inPane))!).hookSpecificOutput.updatedInput.command).toContain("job run --wait");
+    expect(await runHook(JSON.stringify(background), {})).toBeUndefined();
+    expect(await runHook(JSON.stringify({ ...background, tool_input: { command: "ls" } }), inPane)).toBeUndefined();
+    expect(backgroundAsJob({ ...background, tool_input: { command: "qmux job run -- make", run_in_background: true } }, ["qmux"])).toBeUndefined();
+    const wrapped = { ...bash, tool_input: { command: "qmux job run --wait --name x -- bash -c ls" } };
+    expect(permissionForm(wrapped, ["qmux"]).elements[1]).toMatchObject({ options: [{ value: "allow" }, { value: "deny" }] });
   });
 });

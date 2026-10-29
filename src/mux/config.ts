@@ -11,8 +11,8 @@ export type PaneSpec = { command?: string[]; name?: string; focus?: boolean };
 export type SplitSpec = { row: LayoutSpec[] } | { column: LayoutSpec[] };
 export type TabsSpec = { tabs: PaneSpec[] };
 export type LayoutSpec = PaneSpec | SplitSpec | TabsSpec;
-export type ServiceSpec = { command: string[]; name?: string };
-export type LayoutEntry = { services: ServiceSpec[]; layout: LayoutSpec };
+export type JobSpec = { command: string[]; name?: string; dock: boolean };
+export type LayoutEntry = { jobs: JobSpec[]; layout: LayoutSpec };
 
 const paneSpec = z
   .object({
@@ -31,23 +31,31 @@ const layoutSpec: z.ZodType<LayoutSpec> = z.lazy(() =>
   ]),
 );
 
-const serviceSpec = z
+const jobSpec = z
   .object({
     command: z.array(z.string()).min(1).describe("Program and arguments"),
-    name: z.string().regex(/^[\w.-]+$/, "service names use letters, digits, \".\", \"_\", and \"-\"").optional(),
+    name: z.string().optional(),
+    dock: z.boolean().default(false).describe("Show the job's name and last line of output at the bottom of the tab"),
   })
   .strict();
 
 const layoutEntry: z.ZodType<LayoutEntry, unknown> = z
-  .looseObject({ services: z.array(serviceSpec).default([]).describe("Background processes started with the tab and stopped when it closes") })
-  .transform(({ services, ...layout }) => ({ services, layout: layout as unknown }))
-  .pipe(z.object({ services: z.array(serviceSpec), layout: layoutSpec }));
+  .looseObject({
+    jobs: z.array(jobSpec).default([]).describe("Jobs started out of sight with the tab and closed with it"),
+    services: z.undefined({ error: "services are now jobs: rename `services:` to `jobs:`" }).optional(),
+  })
+  .transform(({ jobs, services: _services, ...layout }) => ({ jobs, layout: layout as unknown }))
+  .pipe(z.object({ jobs: z.custom<JobSpec[]>(), layout: layoutSpec }));
 
 export const configSchema = z
   .object({
     defaultCwd: z.string().optional().describe("Directory for new tabs; defaults to the focused pane's directory"),
     env: z.record(z.string(), z.string()).default({}).describe("Environment variables set in every pane, such as EDITOR"),
+    scrollback: z.number().positive().max(4000).default(50).describe("Megabytes of history each pane keeps; 50 is roughly 70,000 lines at 80 columns"),
     untrackedCommands: z.array(z.string()).default([]).describe("Programs that never get a long-running command badge, such as editors and agents"),
+    agentJobs: z
+      .array(z.string().regex(/^[^\s.][^\s]*$/, "agentJobs are a program path like \"scripts/up\", without arguments or a leading ./"))
+      .default([]).describe("Commands, such as \"scripts/up\", that agents must run in the background as jobs; foreground runs are refused"),
     layouts: z.record(z.string(), layoutEntry).default({}),
     tabs: z
       .record(z.string(), z.object({ layout: z.string(), cwd: z.string().optional().describe("Working directory; defaults to defaultCwd") }).strict())

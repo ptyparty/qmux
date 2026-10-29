@@ -287,7 +287,7 @@ class ImageView implements ElementView {
   }
 }
 
-function markdownStyle(renderer: CliRenderer): SyntaxStyle {
+export function markdownStyle(renderer: CliRenderer): SyntaxStyle {
   return SyntaxStyle.fromStyles(
     {
       default: {},

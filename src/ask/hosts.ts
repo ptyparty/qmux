@@ -62,6 +62,41 @@ export function shellQuote(args: string[]): string {
   return args.map((arg) => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`)).join(" ");
 }
 
+export function shellWords(command: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let started = false;
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]!;
+    if (char === "'") {
+      const end = command.indexOf("'", index + 1);
+      word += command.slice(index + 1, end < 0 ? undefined : end);
+      index = end < 0 ? command.length : end;
+      started = true;
+    } else if (char === '"') {
+      let end = index + 1;
+      for (; end < command.length && command[end] !== '"'; end++) {
+        if (command[end] === "\\") end++;
+        word += command[end] ?? "";
+      }
+      index = end;
+      started = true;
+    } else if (char === "\\") {
+      word += command[++index] ?? "";
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) words.push(word);
+      word = "";
+      started = false;
+    } else {
+      word += char;
+      started = true;
+    }
+  }
+  if (started) words.push(word);
+  return words;
+}
+
 async function openQmuxPopup(command: string[], title: string): Promise<void> {
   const socket = process.env.QMUX_SOCKET;
   if (!socket) throw new HostLaunchError("QMUX_SOCKET is not set; run this from a qmux pane");

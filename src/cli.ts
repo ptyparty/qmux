@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { constants } from "node:os";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 import { AlreadyAnsweredError, answer, ask, reopen } from "./ask/ask.ts";
@@ -6,7 +7,7 @@ import { HostLaunchError, hostNames, type HostName } from "./ask/hosts.ts";
 import { AskStore, UnknownAskError } from "./ask/store.ts";
 import { UnsafeDirectoryError } from "./private-dir.ts";
 import { formSpec, parseFormSpec, type FormSpec } from "./form/schema.ts";
-import { runHook } from "./hooks/hook.ts";
+import { runHook, waitForAnswers } from "./hooks/hook.ts";
 import { sendControl } from "./mux/control.ts";
 import { defaultSessionName, listSessions, quitSession, SessionError } from "./mux/session/sessions.ts";
 
@@ -25,6 +26,12 @@ Usage:
   qmux pane open [--right|--below|--tab|--popup] [--name NAME] [--no-focus] [--width PCT] [--height PCT] -- COMMAND...
       From inside a session, open a pane running COMMAND beside this one, or over this tab with --popup.
       A popup closes when COMMAND succeeds; --width and --height size it. Prints the new pane's id.
+  qmux claude [--resume ID|--continue] [-- CLAUDE_ARGS...]
+      Run a Claude Code session in this pane with qmux drawing the conversation (experimental).
+      From anywhere else in the tab, Alt+c sends it a message.
+  qmux job run [--name NAME] [--wait] -- COMMAND...
+      From inside a session, run COMMAND out of sight as a job in this tab; a toast says when it is done.
+      Prints the job's id. With --wait, print the job's output as it runs and exit with its exit code.
   qmux ask [spec.json|-] [--wait] [--timeout SECONDS] [--host auto|qmux|zellij|tmux|none]
       Open a form for the user and print {"id", "host", "message", "status", ...}.
       With --wait, block until the user answers (or the timeout passes).
@@ -46,6 +53,13 @@ Usage:
   qmux hook
       Claude Code hook: reads the hook's JSON on stdin and reports the agent's state to qmux.
       Permission requests become a popup in the agent's tab. Does nothing outside qmux.
+  qmux peek spec.json --pane ID
+      Show an agent's reply (what Alt p opens); a typed reply is sent to pane ID.
+  qmux hooks [--install]
+      List the Claude Code hooks qmux needs that are missing from your settings, or add them.
+  qmux hook --wake
+      Claude Code Stop hook to run with asyncRewake: waits until a form this pane opened is answered
+      or dismissed, then exits 2 with the answer so Claude wakes up and reads it.
 
 Results are JSON: {"status":"submitted","values":{...}}, {"status":"cancelled"}, or {"status":"pending"}.`;
 
@@ -68,8 +82,12 @@ async function main(argv: string[]): Promise<void> {
       return print(z.toJSONSchema(formSpec));
     case "mcp":
       return (await import("./mcp/server.ts")).serveStdio();
+    case "peek":
+      return peekCommand(rest);
+    case "hooks":
+      return hooksCommand(rest);
     case "hook":
-      return hookCommand();
+      return rest[0] === "--wake" ? wakeCommand() : hookCommand();
     case undefined:
       return (await import("./mux/session/client.ts")).attachSession(defaultSessionName);
     case "attach":
@@ -82,6 +100,10 @@ async function main(argv: string[]): Promise<void> {
       return projectCommand(rest);
     case "pane":
       return paneCommand(rest);
+    case "job":
+      return jobCommand(rest);
+    case "claude":
+      return claudeCommand(rest);
     case "server":
       return (await import("./mux/session/server.ts")).runServer(requireName(rest));
     case "help":
@@ -179,6 +201,45 @@ async function hookCommand(): Promise<void> {
   process.exit(0);
 }
 
+async function peekCommand(args: string[]): Promise<void> {
+  const { values, positionals } = parse(args, { pane: { type: "string" } });
+  const [source] = positionals;
+  if (!source) throw new UsageError("qmux peek needs a spec file");
+  const result = await (await import("./form/show.ts")).showForm(await readSpec(source), async () => {});
+  const paneId = Number(values.pane);
+  const socket = process.env.QMUX_SOCKET;
+  const text = result.status === "submitted" && typeof result.values.reply === "string" ? result.values.reply.trim() : "";
+  if (!text || !socket || !Number.isInteger(paneId)) return;
+  await sendControl(socket, { method: "agent.prompt", params: { paneId, text } }).catch(() => undefined);
+}
+
+async function hooksCommand(args: string[]): Promise<void> {
+  const { values } = parse(args, { install: { type: "boolean" } });
+  const setup = await import("./claude/hooks-setup.ts");
+  const { user: path, local: localPath } = setup.settingsPaths();
+  const [settings, local] = await Promise.all([setup.readSettings(path), setup.readSettings(localPath)]);
+  const missing = setup.missingHooks([settings, local]);
+  if (missing.length === 0) return console.log(`qmux hooks are up to date in ${path}`);
+  if (!values.install) {
+    console.log(`Missing or out of date in ${path}:`);
+    for (const hook of missing) console.log(`  ${hook.label}: ${hook.why}`);
+    return console.log("Run `qmux hooks --install` to add them.");
+  }
+  const backup = await setup.writeSettings(path, setup.installHooks(settings, [local], setup.defaultHookCommand()));
+  console.log(`Installed ${missing.length} qmux hooks in ${path}${backup ? `; the old file is at ${backup}` : ""}`);
+}
+
+async function wakeCommand(): Promise<void> {
+  let input = {};
+  try {
+    input = JSON.parse(await Bun.stdin.text());
+  } catch {}
+  const notice = await waitForAnswers(process.env, input).catch(() => undefined);
+  if (!notice) process.exit(0);
+  console.error(notice);
+  process.exit(2);
+}
+
 async function projectCommand(args: string[]): Promise<void> {
   const [target] = args;
   if (!target) throw new UsageError("missing project name or path");
@@ -219,6 +280,80 @@ async function paneCommand(args: string[]): Promise<void> {
   });
   if (!response.ok) throw new SessionError(response.error);
   console.log((response.result as { paneId: number }).paneId);
+}
+
+async function claudeCommand(args: string[]): Promise<void> {
+  const { runClaude, runCompose } = await import("./claude/run.ts");
+  if (args[0] === "compose") {
+    const { values } = parse(args.slice(1), { socket: { type: "string" }, name: { type: "string" } });
+    if (!values.socket) throw new UsageError("missing --socket");
+    return runCompose(values.socket, values.name ?? "Claude");
+  }
+  const { values, positionals } = parse(args, { resume: { type: "string" }, continue: { type: "boolean" } });
+  if (values.resume && values.continue) throw new UsageError("pick one of --resume and --continue");
+  const picksItself = ["--resume", "-r", "--continue", "-c", "--session-id", "--fork-session", "--from-pr"];
+  const pick = !values.resume && !values.continue && !positionals.some((arg) => picksItself.includes(arg.split("=")[0]!));
+  return runClaude([...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...positionals], { pick });
+}
+
+async function jobCommand(args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== "run") throw new UsageError(`unknown job command ${subcommand ?? ""}`.trim());
+  const { values, positionals } = parse(rest, { name: { type: "string" }, wait: { type: "boolean" } });
+  if (positionals.length === 0) throw new UsageError("missing the command to run as a job");
+  const socket = process.env.QMUX_SOCKET;
+  const near = Number(process.env.QMUX_PANE_ID);
+  if (!socket || !Number.isInteger(near)) throw new UsageError("qmux job run works from inside a qmux pane");
+  const control = async (request: Parameters<typeof sendControl>[1]) => {
+    const response = await sendControl(socket, request).catch((error: Error) => {
+      throw new SessionError(error.message);
+    });
+    if (!response.ok) throw new SessionError(response.error);
+    return response.result;
+  };
+  const { jobId, log } = (await control({ method: "job.run", params: { command: positionals, near, name: values.name, cwd: process.cwd(), env: definedEnv() } })) as { jobId: number; log: string };
+  if (!values.wait) {
+    console.log(jobId);
+    return;
+  }
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(signal, () => {
+      void sendControl(socket, { method: "job.stop", params: { jobId } }).finally(() => process.exit(128 + constants.signals[signal]));
+    });
+  }
+  const output = new JobOutput(log);
+  for (;;) {
+    const status = (await control({ method: "job.status", params: { jobId } })) as { state: string; code: number | null };
+    const finished = status.state !== "running";
+    if (finished) await Bun.sleep(300);
+    await output.drain(finished);
+    if (finished) process.exit(status.code ?? 1);
+    await Bun.sleep(300);
+  }
+}
+
+function definedEnv(): Record<string, string> {
+  return Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
+class JobOutput {
+  private offset = 0;
+  private pending = "";
+  private readonly decoder = new TextDecoder();
+
+  constructor(private readonly path: string) {}
+
+  async drain(final: boolean): Promise<void> {
+    const file = Bun.file(this.path);
+    const bytes = await file.slice(this.offset).bytes();
+    this.offset += bytes.length;
+    const text = this.pending + this.decoder.decode(bytes, { stream: !final });
+    const end = final ? text.length : text.lastIndexOf("\n") + 1;
+    this.pending = text.slice(end);
+    const lines = Bun.stripANSI(text.slice(0, end)).replace(/\r\n/g, "\n").split("\n").map((line) => line.slice(line.lastIndexOf("\r") + 1));
+    const printable = lines.join("\n");
+    if (printable !== "") process.stdout.write(final && !printable.endsWith("\n") ? `${printable}\n` : printable);
+  }
 }
 
 function percent(value: string | undefined, flag: string): number | undefined {

@@ -1,15 +1,21 @@
 import type { CliRenderer, KeyEvent } from "@opentui/core";
 import { randomBytes } from "node:crypto";
+import { closeSync, ftruncateSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { runtimeDir } from "../private-dir.ts";
+import { ensurePrivateDir, runtimeDir } from "../private-dir.ts";
 import type { Config } from "./config.ts";
 import type { ControlRequest, ControlResponse } from "./control.ts";
 import type { GraphicsRelay } from "./graphics.ts";
 import { findProjects } from "./projects.ts";
 import { paneIds, type PaneId } from "./layout.ts";
+import { selfCommand } from "../ask/hosts.ts";
 import { Pane, type CommandEvent } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
-import { TabServices } from "./services.ts";
+import { TabDirs } from "./tab-dirs.ts";
+import { LineTail } from "./tail.ts";
+import { refuseAgentCommand } from "./agent-jobs.ts";
+import { deliver } from "../claude/inbox.ts";
+import { bracketedPaste, peekSpec, promptRoute } from "./peek.ts";
 import { Tray, trayWidgets } from "./tray.ts";
 import { MuxView } from "./view.ts";
 import { Workspace, type PaneHost, type PopupSize } from "./workspace.ts";
@@ -41,16 +47,17 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
   const panes = new Map<PaneId, Pane>();
   const graphics = options.graphics;
   const paneEnv = { ...options.config.env, QMUX_SOCKET: options.controlSocket, QMUX_SESSION: options.session, QMUX_SERVER_ID: randomBytes(8).toString("hex") };
-  const services = new TabServices(join(runtimeDir(), "sessions", options.session, "tabs"), () => ({ ...process.env, ...paneEnv }), (tabId, service, detail) => {
-    workspace.serviceFailed(tabId, service, detail);
-    refresh();
-  });
+  const tabDirs = new TabDirs(join(runtimeDir(), "sessions", options.session, "tabs"));
   let view: MuxView | undefined;
   let stopped = false;
   let pixelSize = "";
 
   let popupTimer: Timer | undefined;
-  const runningCommands = new Map<PaneId, { started: number; timer: Timer }>();
+  let toastTimer: Timer | undefined;
+  const runningCommands = new Map<PaneId, { started: number; timer: Timer; commandLine: string }>();
+  const jobLogs = new Map<PaneId, { fd: number; path: string }>();
+  const nativeClaudes = new Map<PaneId, string>();
+  const paneSessions = new Map<PaneId, string>();
 
   const copyToClipboard = (text: string) => {
     workspace.message = renderer.copyToClipboardOSC52(text) ? `Copied ${text.length} characters` : "This terminal does not support copying (OSC 52)";
@@ -61,19 +68,27 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     const running = runningCommands.get(id);
     if (running) clearTimeout(running.timer);
     runningCommands.delete(id);
+    const job = workspace.jobStatus(id);
+    if (job) {
+      if (!job.command && event.kind === "finished") {
+        workspace.jobFinished(id, event.code);
+        refresh();
+      }
+      return;
+    }
     if (event.kind === "started") {
       if (event.program && options.config.untrackedCommands.includes(event.program)) return;
       const timer = setTimeout(() => {
         workspace.setCommandState(id, "running");
         refresh();
       }, longCommandMs);
-      runningCommands.set(id, { started: Date.now(), timer });
+      runningCommands.set(id, { started: Date.now(), timer, commandLine: event.commandLine || event.program || "command" });
       return;
     }
     if (!running || Date.now() - running.started < longCommandMs) return;
     const succeeded = event.code === 0;
     if (workspace.setCommandState(id, succeeded ? "succeeded" : "failed")) {
-      const where = workspace.tabs.find((tab) => paneIds(tab.root).includes(id))?.name ?? "qmux";
+      const where = workspace.tabOf(id)?.name ?? "qmux";
       renderer.triggerNotification(succeeded ? "A command finished" : `A command failed (exit ${event.code})`, where);
     }
     refresh();
@@ -93,6 +108,32 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     const wait = workspace.popupWaitMs();
     clearTimeout(popupTimer);
     if (wait !== undefined) popupTimer = setTimeout(refresh, wait + 20);
+    const expiry = workspace.nextToastExpiry();
+    clearTimeout(toastTimer);
+    if (expiry !== undefined) toastTimer = setTimeout(refresh, expiry + 20);
+  };
+
+  const jobTails = new Map<PaneId, LineTail>();
+  let dockTimer: Timer | undefined;
+
+  const openJobLog = (id: PaneId, tabId: number) => {
+    const path = join(ensurePrivateDir(join(tabDirs.tabDir(tabId), "jobs")), `${id}.log`);
+    jobLogs.set(id, { fd: openSync(path, "a", 0o600), path });
+    jobTails.set(id, new LineTail());
+  };
+
+  const closeJobLog = (id: PaneId) => {
+    const log = jobLogs.get(id);
+    if (log) closeSync(log.fd);
+    jobLogs.delete(id);
+    jobTails.delete(id);
+  };
+
+  const refreshDock = () => {
+    dockTimer ??= setTimeout(() => {
+      dockTimer = undefined;
+      refresh();
+    }, 200);
   };
 
   const syncPixelSize = () => {
@@ -102,23 +143,54 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     for (const pane of panes.values()) pane.syncSize();
   };
 
+  const trackSession = (id: PaneId, sessionId: string, ended: boolean) => {
+    if (ended) {
+      if (paneSessions.get(id) === sessionId) paneSessions.delete(id);
+    } else if (panes.has(id)) paneSessions.set(id, sessionId);
+  };
+
+  const wakeClaude = (socket: string) => {
+    void Bun.connect({
+      unix: socket,
+      socket: {
+        open: (connection) => void connection.end(`${JSON.stringify({ wake: true })}\n`),
+        data: () => {},
+      },
+    }).catch(() => undefined);
+  };
+
   const destroyPane = (id: PaneId) => {
     panes.get(id)?.destroy();
     panes.delete(id);
+    closeJobLog(id);
+    nativeClaudes.delete(id);
+    workspace.dormant.delete(id);
+    paneSessions.delete(id);
+    workspace.activities.delete(id);
     graphics.forgetPane(id);
   };
 
-  type SpawnOptions = { holdOnExit?: boolean; holdOnFailure?: boolean; frameless?: boolean; tabId?: number };
+  const scrollbackBytes = options.config.scrollback * 1_000_000;
+  type SpawnOptions = { holdOnExit?: boolean; holdOnFailure?: boolean; frameless?: boolean; job?: boolean; tabId?: number; callerEnv?: Record<string, string> };
   const spawnPane = (id: PaneId, cwd: string | undefined, command: string[] | undefined, onExit: (id: PaneId) => void, options: SpawnOptions = {}) => {
-    const { holdOnExit, holdOnFailure, frameless, tabId } = options;
-    const env: Record<string, string> = { ...paneEnv };
+    const { holdOnExit, holdOnFailure, frameless, job, tabId, callerEnv } = options;
+    const { QMUX_PANE_ID: _pane, TERM: _term, COLORTERM: _colors, ...inherited } = callerEnv ?? {};
+    const env: Record<string, string> = { ...inherited, ...paneEnv };
     if (renderer.capabilities?.kitty_graphics) env.QMUX_KITTY_GRAPHICS = "1";
-    if (tabId !== undefined) env.QMUX_TAB_DIR = services.tabDir(tabId);
-    panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless }, scheduler, {
+    if (tabId !== undefined) env.QMUX_TAB_DIR = tabDirs.tabDir(tabId);
+    if (job) env.QMUX_JOB = String(id);
+    panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless, job, scrollbackBytes }, scheduler, {
       onHeld: () => refresh(),
       onCommand: frameless || holdOnFailure ? undefined : commandEvent,
       onClipboard: (_, text) => copyToClipboard(text),
       onGraphics: (paneId, command) => graphics.forward(paneId, command),
+      onOutput: (paneId, data) => {
+        const log = jobLogs.get(paneId);
+        if (log) writeSync(log.fd, data);
+        const job = jobTails.get(paneId)?.push(data) ? workspace.jobStatus(paneId) : undefined;
+        if (job?.dock && job.tabId === workspace.tab.id) refreshDock();
+      },
+      onFinished: (paneId, code) => workspace.jobFinished(paneId, code),
       onExit: (exited) => {
         destroyPane(exited);
         onExit(exited);
@@ -133,10 +205,46 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
 
   const host: PaneHost = {
     create: (id, cwd, command, tabId) => spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), { holdOnExit: true, tabId }),
-    startServices: (tabId, specs, cwd) => services.start(tabId, specs, cwd),
-    stopServices: (tabId) => void services.stop(tabId),
+    createJob: (id, cwd, command, tabId, env) => {
+      spawnPane(id, cwd, command, (exited) => workspace.paneExited(exited), { holdOnExit: true, job: true, tabId, callerEnv: env });
+      openJobLog(id, tabId);
+    },
+    trackJob: (id, tabId) => openJobLog(id, tabId),
+    untrackJob: (id) => {
+      closeJobLog(id);
+      panes.get(id)?.settle();
+    },
+    runningCommand: (id) => runningCommands.get(id)?.commandLine,
+    shellCommand: (text) => [process.env.SHELL ?? "/bin/sh", "-c", text],
+    peekReply: (near, title, text) => {
+      const tabId = workspace.tabOf(near)?.id;
+      if (tabId === undefined) return;
+      const spec = join(tabDirs.tabDir(tabId), `peek-${near}.json`);
+      void Bun.write(spec, JSON.stringify(peekSpec(title, text))).then(() => {
+        openViewPopup(near, [...selfCommand(), "peek", spec, "--pane", String(near)], title, { width: 80, height: 80 }, true);
+        refresh();
+      });
+    },
+    composeClaude: (near, candidates) => {
+      const awake = (id: PaneId) => nativeClaudes.has(id) && !workspace.dormant.has(id);
+      const target = awake(near) ? near : (candidates.find(awake) ?? (nativeClaudes.has(near) ? near : candidates.find((id) => nativeClaudes.has(id))));
+      if (target === undefined) return "No native Claude in this tab";
+      if (workspace.dormant.has(target)) {
+        wakeClaude(nativeClaudes.get(target)!);
+        return undefined;
+      }
+      const name = workspace.paneNames.get(target) ?? workspace.jobStatus(target)?.name ?? "Claude";
+      openViewPopup(near, [...selfCommand(), "claude", "compose", "--socket", nativeClaudes.get(target)!, "--name", name], `Message ${name}`, { width: 70, height: 30 });
+      return undefined;
+    },
+    tabClosed: (tabId) => tabDirs.remove(tabId),
     isHeld: (id) => panes.get(id)?.exited ?? false,
-    rerun: (id) => panes.get(id)?.rerun(),
+    rerun: (id) => {
+      const log = jobLogs.get(id);
+      if (log) ftruncateSync(log.fd, 0);
+      if (jobTails.has(id)) jobTails.set(id, new LineTail());
+      panes.get(id)?.rerun();
+    },
     replaceWithShell: (id) => panes.get(id)?.replaceWithShell(),
     projects: () => findProjects(options.config.projects.roots),
     destroy: destroyPane,
@@ -160,6 +268,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       openWidget(index);
       refresh();
     },
+    onOpenJob: (id) => {
+      workspace.openJob(id);
+      refresh();
+    },
+    jobLine: (id) => jobTails.get(id)?.line,
   });
   view.render();
 
@@ -167,17 +280,17 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     const id = workspace.reservePaneId();
     spawnPane(id, host.cwd(askingPane ?? workspace.tab.focused), command, (exited) => workspace.popupExited(exited), { frameless: true });
     if (workspace.openPopup(id, title, askingPane)) {
-      const where = workspace.tabs.find((tab) => askingPane !== undefined && paneIds(tab.root).includes(askingPane))?.name ?? "qmux";
+      const where = workspace.tabOf(askingPane)?.name ?? "qmux";
       renderer.triggerNotification(title, where);
     }
     refresh();
   };
 
-  const openViewPopup = (near: PaneId, command: string[], title: string, size: PopupSize | undefined): PaneId | undefined => {
-    const tabId = workspace.tabs.find((tab) => paneIds(tab.root).includes(near))?.id;
+  const openViewPopup = (near: PaneId, command: string[], title: string, size: PopupSize | undefined, frameless = false): PaneId | undefined => {
+    const tabId = workspace.tabOf(near)?.id;
     if (tabId === undefined) return undefined;
     const id = workspace.reservePaneId();
-    spawnPane(id, host.cwd(near), command, (exited) => workspace.popupExited(exited), { holdOnFailure: true, tabId });
+    spawnPane(id, host.cwd(near), command, (exited) => workspace.popupExited(exited), { holdOnFailure: true, tabId, frameless });
     workspace.openViewPopup(id, title, near, size);
     refresh();
     return id;
@@ -223,10 +336,11 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     clearInterval(titles);
     tray.stop();
     clearTimeout(popupTimer);
+    clearTimeout(toastTimer);
+    clearTimeout(dockTimer);
     for (const running of runningCommands.values()) clearTimeout(running.timer);
     renderer.keyInput.off("keypress", onKey);
     for (const id of [...panes.keys()]) destroyPane(id);
-    void services.stopAll();
   }
 
   return {
@@ -237,11 +351,50 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return { ok: true };
         case "session.info":
           return { ok: true, result: { session: options.session, tabs: workspace.tabs.length, panes: panes.size } };
+        case "agent.session":
+          trackSession(request.params.paneId, request.params.sessionId, false);
+          return { ok: true };
+        case "agent.command": {
+          const { paneId, command, background } = request.params;
+          const tab = workspace.tabOf(paneId);
+          const running = tab ? workspace.tabJobs(tab).filter((job) => job.state === "running") : [];
+          return { ok: true, result: { refusal: refuseAgentCommand(options.config.agentJobs, command, background, running) } };
+        }
+        case "agent.activity": {
+          const { paneId, text } = request.params;
+          workspace.activities.set(paneId, text);
+          const job = workspace.jobStatus(paneId);
+          if (job?.dock && job.tabId === workspace.tab.id) refreshDock();
+          return { ok: true };
+        }
+        case "claude.sessions":
+          return {
+            ok: true,
+            result: [...paneSessions].flatMap(([paneId, sessionId]) => {
+              const tab = workspace.tabOf(paneId);
+              return tab ? [{ paneId, sessionId, tab: tab.name }] : [];
+            }),
+          };
+        case "pane.focus": {
+          const { paneId, closing, onlyJob } = request.params;
+          if (!workspace.tabOf(paneId)) return { ok: false, error: `no pane ${paneId}` };
+          if (workspace.jobStatus(paneId)) workspace.openJob(paneId);
+          else if (!onlyJob) workspace.focusPane(paneId);
+          if (closing !== undefined && closing !== paneId)
+            setTimeout(() => {
+              destroyPane(closing);
+              workspace.paneExited(closing);
+              refresh();
+            }, 0);
+          refresh();
+          return { ok: true };
+        }
         case "agent.state": {
-          const { paneId, state, detail } = request.params;
-          const notify = workspace.setAgentState(paneId, state === "clear" ? undefined : state);
+          const { paneId, state, detail, sessionId, reply } = request.params;
+          if (sessionId) trackSession(paneId, sessionId, state === "clear");
+          const notify = workspace.setAgentState(paneId, state === "clear" ? undefined : state, reply);
           if (notify) {
-            const where = workspace.tabs.find((tab) => paneIds(tab.root).includes(paneId))?.name ?? "qmux";
+            const where = workspace.tabOf(paneId)?.name ?? "qmux";
             renderer.triggerNotification(detail ?? (state === "waiting" ? "An agent needs you" : "An agent finished"), where);
           }
           refresh();
@@ -261,6 +414,68 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           refresh();
           return paneId === undefined ? { ok: false, error: `no pane ${near}` } : { ok: true, result: { paneId } };
         }
+        case "job.run": {
+          const { near, command, name, cwd, env } = request.params;
+          const jobId = workspace.runJob(near, command, name, { cwd, env });
+          refresh();
+          if (jobId === undefined) return { ok: false, error: `no pane ${near}` };
+          return { ok: true, result: { jobId, log: jobLogs.get(jobId)?.path } };
+        }
+        case "job.status": {
+          const job = workspace.jobStatus(request.params.jobId);
+          const promoted = job ? undefined : panes.get(request.params.jobId);
+          if (promoted) {
+            const code = promoted.code;
+            const state = code === undefined || code === null ? "running" : code === 0 ? "succeeded" : "failed";
+            return { ok: true, result: { state, code: code ?? null } };
+          }
+          if (!job) return { ok: false, error: `job ${request.params.jobId} was closed` };
+          return { ok: true, result: { state: job.state, code: job.code ?? null } };
+        }
+        case "job.stop":
+          if (!workspace.jobStatus(request.params.jobId)) return { ok: false, error: `job ${request.params.jobId} was closed` };
+          workspace.closeJob(request.params.jobId);
+          refresh();
+          return { ok: true };
+        case "claude.register": {
+          const { paneId, socket, dormant } = request.params;
+          if (!panes.has(paneId)) return { ok: false, error: `no pane ${paneId}` };
+          if (socket === null) nativeClaudes.delete(paneId);
+          else {
+            nativeClaudes.set(paneId, socket);
+            workspace.markAgent(paneId);
+          }
+          if (socket !== null && dormant) workspace.dormant.add(paneId);
+          else workspace.dormant.delete(paneId);
+          refresh();
+          return { ok: true };
+        }
+        case "claude.compose": {
+          const message = host.composeClaude(request.params.paneId, [request.params.paneId]);
+          return message ? { ok: false, error: message } : { ok: true };
+        }
+        case "agent.prompt": {
+          const { paneId, text } = request.params;
+          const pane = panes.get(paneId);
+          if (!pane) return { ok: false, error: `no pane ${paneId}` };
+          const socket = nativeClaudes.get(paneId);
+          const route = promptRoute(socket !== undefined, workspace.agents.get(paneId));
+          if (route === "busy") {
+            workspace.message = `${workspace.paneNames.get(paneId) ?? workspace.jobStatus(paneId)?.name ?? "Claude"} is busy · open it to answer`;
+            refresh();
+            return { ok: false, error: "busy" };
+          }
+          if (route === "socket") void deliver(socket!, text).catch(() => undefined);
+          else {
+            pane.type(bracketedPaste(text));
+            setTimeout(() => pane.type("\r"), 100);
+          }
+          return { ok: true };
+        }
+        case "job.hide":
+          workspace.popupExited(request.params.jobId);
+          refresh();
+          return { ok: true };
         case "session.quit":
           workspace.quit = true;
           refresh();

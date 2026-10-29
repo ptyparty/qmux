@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   addPaneTab,
   addToFirstTabs,
+  inPaneTabs,
   leaf,
   neighbor,
   paneIds,
@@ -74,13 +75,20 @@ describe("layout", () => {
       expect(addToFirstTabs(leaf(1), 2)).toBeUndefined();
     });
 
-    test("for focus, group members sit side by side", () => {
+    test("for focus, only the shown member of a group takes up space", () => {
+      const showingSecond: LayoutNode = { kind: "split", axis: "row", children: [leaf(1), { kind: "tabs", panes: [2, 3], selected: 1 }] };
       expect(neighbor(ide(), 1, "right")).toBe(2);
-      expect(neighbor(ide(), 2, "right")).toBe(3);
-      expect(neighbor(ide(), 3, "left")).toBe(2);
+      expect(neighbor(showingSecond, 1, "right")).toBe(3);
+      expect(neighbor(ide(), 2, "right")).toBeUndefined();
       expect(neighbor(ide(), 2, "left")).toBe(1);
-      expect(neighbor(ide(), 3, "up")).toBeUndefined();
       expect(neighbor(ide(), 2, "down")).toBeUndefined();
+      expect(paneRects(ide()).get(2)).toMatchObject({ x: 0.5, width: 0.5 });
+      expect(paneRects(ide()).has(3)).toBe(false);
+    });
+
+    test("a pane can tell whether it is in a group", () => {
+      expect(inPaneTabs(ide(), 3)).toBe(true);
+      expect(inPaneTabs(ide(), 1)).toBe(false);
     });
 
     test("selecting a member", () => {

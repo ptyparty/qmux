@@ -13,8 +13,9 @@ export class Launcher {
   private readonly matches: TextRenderable;
   private readonly marked: TextRenderable;
   private readonly footer: TextRenderable;
+  private firstShown = 0;
 
-  constructor(renderer: CliRenderer) {
+  constructor(private readonly renderer: CliRenderer) {
     this.box = new BoxRenderable(renderer, {
       position: "absolute",
       left: "20%",
@@ -42,28 +43,41 @@ export class Launcher {
 
   render(prompt: Prompt | undefined): void {
     this.box.visible = prompt !== undefined;
-    if (!prompt) return;
+    if (!prompt) {
+      this.firstShown = 0;
+      return;
+    }
     this.box.title = ` ${prompt.title} `;
     this.detail.visible = prompt.detail !== undefined;
     this.detail.content = prompt.detail ?? "";
     this.input.content = styled([bold(fg(theme.accent)("› ")), fg(theme.text)(prompt.text), bg(theme.text)(" ")]);
+    const marked = prompt.marked ?? [];
+    const markedRows = marked.length > 0 ? marked.length + 2 : 0;
+    const fixedRows = 2 + (prompt.detail ? 1 : 0) + 1 + 1 + markedRows + 2;
+    const shown = this.showMatches(prompt, Math.max(Math.floor(this.renderer.height * 0.75) - fixedRows, 3));
     const matches = prompt.matches;
     this.matches.visible = matches !== undefined;
-    if (matches) this.matches.content = matches.length > 0 ? styled(matchLines(prompt)) : styled([fg(theme.muted)("No matching projects")]);
-    const marked = prompt.marked ?? [];
+    if (matches) this.matches.content = shown.length > 0 ? styled(matchLines(prompt, shown, this.firstShown)) : styled([fg(theme.muted)("No matching projects")]);
     this.marked.visible = marked.length > 0;
     if (marked.length > 0) this.marked.content = styled(markedLines(marked));
-    this.footer.content = matches ? `↑↓ select · Space mark · Tab complete · Enter open${marked.length > 0 ? ` ${marked.length}` : ""} · Esc cancel` : "Enter confirm · Esc cancel";
-    const matchRows = matches ? Math.max(matches.length, 1) + 1 : 0;
-    const markedRows = marked.length > 0 ? marked.length + 2 : 0;
+    this.footer.content = matches ? `↑↓ select · Space mark · Tab complete · Enter open${marked.length > 0 ? ` ${marked.length}` : ""} · Alt+Enter without jobs · Esc cancel` : "Enter confirm · Esc cancel";
+    const matchRows = matches ? Math.max(shown.length, 1) + 1 : 0;
     this.box.height = 2 + (prompt.detail ? 1 : 0) + 1 + matchRows + markedRows + 2;
+  }
+
+  private showMatches(prompt: Prompt, rows: number): Project[] {
+    const matches = prompt.matches ?? [];
+    if (prompt.selected < this.firstShown) this.firstShown = prompt.selected;
+    if (prompt.selected >= this.firstShown + rows) this.firstShown = prompt.selected - rows + 1;
+    this.firstShown = Math.max(Math.min(this.firstShown, matches.length - rows), 0);
+    return matches.slice(this.firstShown, this.firstShown + rows);
   }
 }
 
-function matchLines(prompt: Prompt): Part[] {
-  return prompt.matches!.flatMap((match, index) => [
+function matchLines(prompt: Prompt, shown: Project[], offset: number): Part[] {
+  return shown.flatMap((match, index) => [
     ...(index > 0 ? ["\n"] : []),
-    ...projectRow(match, { selected: index === prompt.selected, marked: prompt.marked?.some((mark) => mark.dir === match.dir) ?? false }),
+    ...projectRow(match, { selected: offset + index === prompt.selected, marked: prompt.marked?.some((mark) => mark.dir === match.dir) ?? false }),
   ]);
 }
 

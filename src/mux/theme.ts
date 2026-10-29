@@ -13,5 +13,6 @@ export const theme = {
     tab: "#c4a7e7",
     session: "#e6c384",
     tray: "#7fb4ca",
+    jobs: "#d27e99",
   },
 } as const;

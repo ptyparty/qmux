@@ -163,14 +163,13 @@ export class MuxView {
     this.toastTargets = toasts.map((toast) => (toast.kind === "job" ? toast.job.id : toast.id));
     if (toasts.length === 0) return;
     const lines = toasts.map((toast) => {
-      const where = toast.tab === this.workspace.tab ? "" : ` · ${toast.tab.name}`;
       if (toast.kind === "reply") {
         const name = this.workspace.paneNames.get(toast.id) ?? "Claude";
-        return { text: `💬 ${name}${where} · ${firstLine(toast.reply.text, 60)} · Alt p peek · Alt x dismiss`, color: theme.accent };
+        return { text: `💬 ${toast.tab.name} › ${name} · ${firstLine(toast.reply.text, 60)} · Alt p peek · Alt x dismiss`, color: theme.accent };
       }
       const { job } = toast;
       const open = job.state === "failed" ? " · Alt a" : "";
-      return { text: `${jobBadge(job)} ${job.name} · ${jobDetail(job, Date.now())}${where}${open}`, color: job.state === "failed" ? commandColors.failed : commandColors.succeeded };
+      return { text: `${jobBadge(job)} ${toast.tab.name} › ${job.name} · ${jobDetail(job, Date.now())}${open}`, color: job.state === "failed" ? commandColors.failed : commandColors.succeeded };
     });
     this.toastText.content = styled(lines.flatMap((line, index) => [...(index > 0 ? ["\n"] : []), fg(line.color)(line.text)]));
     this.toastBox.width = Math.min(Math.max(...lines.map((line) => Bun.stringWidth(line.text))) + 4, Math.floor(this.renderer.width * 0.6));

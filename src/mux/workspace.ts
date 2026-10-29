@@ -837,11 +837,16 @@ export class Workspace {
 
   private restartTab(): void {
     const tab = this.tab;
+    const withJobs = tab.layoutRuns.size > 0;
     for (const job of this.tabJobs(tab)) this.closeJob(job.id);
+    for (const popup of this.popups.filter((popup) => popup.tabId === tab.id)) {
+      this.host.destroy(popup.id);
+      this.popupExited(popup.id);
+    }
     this.destroyTabPanes(tab);
     tab.layoutRuns = new Map();
     this.createLayoutPanes(tab);
-    tab.layoutJobs.forEach((_, index) => this.runLayoutJob(tab, index));
+    if (withJobs) tab.layoutJobs.forEach((_, index) => this.runLayoutJob(tab, index));
   }
 
   private runLayoutJob(tab: Tab, index: number): void {

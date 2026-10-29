@@ -1016,6 +1016,18 @@ describe("Workspace", () => {
       expect(workspace.popup).toMatchObject({ id: claude, kind: "job" });
     });
 
+    test("a job stops counting as an agent when its Claude leaves or it runs again", () => {
+      const { workspace } = ide({ now: 0 });
+      const job = workspace.runJob(2, ["qmux", "claude"], "claude")!;
+      workspace.markAgent(job);
+      workspace.markAgent(job, false);
+      expect(workspace.jobStatus(job)?.agent).toBe(false);
+      workspace.markAgent(job);
+      workspace.jobFinished(job, 0);
+      press(workspace, "ctrl+s", "r");
+      expect(workspace.jobStatus(job)).toMatchObject({ state: "running", agent: false });
+    });
+
     test("a dormant Claude job forgets that it was dormant when it closes", () => {
       const { workspace } = ide({ now: 0 });
       const claude = workspace.runJob(2, ["qmux", "claude"], "claude")!;

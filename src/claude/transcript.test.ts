@@ -82,10 +82,10 @@ describe("Transcript", () => {
 
   test("a permission answered after an interrupt leaves Claude idle", () => {
     const transcript = feed(new Transcript(), init);
-    transcript.permissionAsked("Bash");
+    transcript.permissionAsked("r1", "Bash");
     transcript.interrupt();
     feed(transcript, { type: "result", subtype: "error_during_execution", is_error: true });
-    transcript.permissionAnswered("Bash", "denied");
+    transcript.permissionAnswered("r1", "denied");
     expect(transcript.state).toBe("idle");
   });
 
@@ -101,18 +101,65 @@ describe("Transcript", () => {
 
   test("permission waits are shown and then say how they were answered", () => {
     const transcript = feed(new Transcript(), init);
-    transcript.permissionAsked("Write");
+    transcript.permissionAsked("r1", "Write");
     expect(transcript.state).toBe("waiting");
     expect(transcript.entries).toEqual([{ kind: "notice", text: "Waiting for you: allow Write?", tone: "warning" }]);
-    transcript.permissionAnswered("Write", "denied");
+    transcript.permissionAnswered("r1", "denied");
     expect(transcript.state).toBe("working");
     expect(transcript.entries).toEqual([{ kind: "notice", text: "Denied Write", tone: "warning" }]);
   });
 
+  test("each permission answer goes to its own request, and Claude waits until all are answered", () => {
+    const transcript = feed(new Transcript(), init);
+    transcript.permissionAsked("r1", "Bash");
+    transcript.permissionAsked("r2", "Bash");
+    transcript.permissionAnswered("r2", "allowed");
+    expect(transcript.state).toBe("waiting");
+    transcript.permissionAnswered("r1", "cancelled");
+    expect(transcript.state).toBe("working");
+    expect(transcript.entries).toEqual([
+      { kind: "notice", text: "Claude withdrew its request for Bash", tone: "info" },
+      { kind: "notice", text: "Allowed Bash", tone: "info" },
+    ]);
+  });
+
+  test("two text blocks stream into two entries, even when one message confirms both", () => {
+    const transcript = feed(new Transcript(), init);
+    feed(
+      transcript,
+      event({ type: "content_block_start", content_block: { type: "text", text: "" } }),
+      event({ type: "content_block_delta", delta: { type: "text_delta", text: "One" } }),
+      event({ type: "content_block_stop" }),
+      event({ type: "content_block_start", content_block: { type: "text", text: "" } }),
+      event({ type: "content_block_delta", delta: { type: "text_delta", text: "Tw" } }),
+      { type: "assistant", message: { content: [{ type: "text", text: "One." }, { type: "text", text: "Two." }] } },
+    );
+    expect(transcript.entries).toEqual([
+      { kind: "text", text: "One.", streaming: false },
+      { kind: "text", text: "Two.", streaming: false },
+    ]);
+  });
+
+  test("a retried message confirms its own text, not the abandoned stream", () => {
+    const transcript = feed(
+      new Transcript(),
+      init,
+      event({ type: "content_block_start", content_block: { type: "text", text: "" } }),
+      event({ type: "content_block_delta", delta: { type: "text_delta", text: "Par" } }),
+      event({ type: "message_start" }),
+      event({ type: "content_block_start", content_block: { type: "text", text: "" } }),
+      { type: "assistant", message: { content: [{ type: "text", text: "Full" }] } },
+    );
+    expect(transcript.entries).toEqual([
+      { kind: "text", text: "Par", streaming: false },
+      { kind: "text", text: "Full", streaming: false },
+    ]);
+  });
+
   test("a dismissed permission says so", () => {
     const transcript = feed(new Transcript(), init);
-    transcript.permissionAsked("Bash");
-    transcript.permissionAnswered("Bash", "dismissed");
+    transcript.permissionAsked("r1", "Bash");
+    transcript.permissionAnswered("r1", "dismissed");
     expect(transcript.entries).toEqual([{ kind: "notice", text: "Dismissed Bash", tone: "warning" }]);
   });
 

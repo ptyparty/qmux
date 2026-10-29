@@ -31,7 +31,11 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   for (const signal of signals) process.on(signal, leave);
   try {
     if (options.pick && runningAsJob()) {
-      inbox = await openInbox((text) => (deliverTo ? deliverTo(text) : queued.push(text)), { dormant: true, commands: () => session?.commands ?? [] });
+      inbox = await openInbox((text) => (deliverTo ? deliverTo(text) : queued.push(text)), {
+        dormant: true,
+        commands: () => session?.commands ?? [],
+        wokenAgain: () => void (session ? undefined : showIfJob()),
+      });
     }
     if (inbox) choice = await wakeAndChoose(renderer, inbox);
     else {
@@ -66,7 +70,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
       cwd: process.cwd(),
       args,
       env: process.env,
-      decide: decidePermission,
+      decide: (request, signal) => decidePermission(request, process.env, signal),
       onChange: () => {
         view?.render();
         if (session) report(session.transcript.entries);
@@ -89,7 +93,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
     for (const signal of signals) process.off(signal, quit);
     view?.destroy();
     view = undefined;
-    await inbox?.stop();
+    await inbox?.stop().catch(() => {});
     session?.stop();
     renderer.destroy();
     await renderer.closed;
@@ -199,7 +203,7 @@ function startedFromShell(): boolean {
   }
 }
 
-type Inbox = { stop: () => Promise<void>; awaken: () => Promise<void>; nextWake: () => Promise<void> };
+type Inbox = { stop: () => Promise<void>; awaken: () => Promise<void>; nextWake: () => Promise<void>; forgetWake: () => void };
 
 function runningAsJob(): boolean {
   const { QMUX_JOB: job, QMUX_PANE_ID: pane, QMUX_SOCKET: control } = process.env;
@@ -231,6 +235,7 @@ function dormant(renderer: CliRenderer, inbox: Inbox): Promise<void> {
       if (done) return;
       done = true;
       renderer.keyInput.off("keypress", onKey);
+      inbox.forgetWake();
       renderer.root.remove(box);
       box.destroyRecursively();
       resolve();
@@ -258,7 +263,7 @@ function requestCompose(): Promise<void> {
   return ownPaneControl((paneId) => ({ method: "claude.compose", params: { paneId } }));
 }
 
-async function openInbox(onText: (text: string) => void, options: { dormant?: boolean; commands?: () => SlashCommand[] } = {}): Promise<Inbox | undefined> {
+async function openInbox(onText: (text: string) => void, options: { dormant?: boolean; commands?: () => SlashCommand[]; wokenAgain?: () => void } = {}): Promise<Inbox | undefined> {
   const { QMUX_SOCKET: control, QMUX_PANE_ID: pane, QMUX_TAB_DIR: dir } = process.env;
   const paneId = Number(pane);
   if (!control || !dir || !Number.isInteger(paneId)) return undefined;
@@ -276,7 +281,7 @@ async function openInbox(onText: (text: string) => void, options: { dormant?: bo
           try {
             const { text, wake: woken, commands } = JSON.parse(line) as { text?: unknown; wake?: unknown; commands?: unknown };
             if (commands === true) socket.write(`${JSON.stringify({ commands: options.commands?.() ?? [] })}\n`);
-            else if (woken === true) wake?.();
+            else if (woken === true) (wake ?? options.wokenAgain)?.();
             else if (typeof text === "string" && text.trim()) onText(text.trim());
           } catch {}
         }
@@ -312,7 +317,7 @@ async function openInbox(onText: (text: string) => void, options: { dormant?: bo
         resolve();
       };
     });
-  return { stop, awaken: async () => void (await register(path)), nextWake };
+  return { stop, awaken: async () => void (await register(path)), nextWake, forgetWake: () => (wake = undefined) };
 }
 
 export async function runCompose(socket: string, name: string): Promise<void> {

@@ -96,10 +96,10 @@ export function permissionDecision(input: PermissionInput, answer: PermissionAns
   }
 }
 
-export type AskStyle = { stopOnDismiss?: boolean };
+export type AskStyle = { stopOnDismiss?: boolean; signal?: AbortSignal };
 
 export async function askPermission(pane: AskOwner, input: PermissionInput, style: AskStyle = {}): Promise<object | undefined> {
-  const status = await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`);
+  const status = await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`, style.signal);
   if (style.stopOnDismiss && status?.status === "cancelled") return dismissed(pane, "The user dismissed the permission request.");
   const values = submitted(status);
   return values && permissionDecision(input, values);
@@ -159,10 +159,10 @@ export function planDecision(toolInput: PlanInput["tool_input"], answer: PlanAns
   }
 }
 
-export async function askPlan(pane: AskOwner, input: PlanInput): Promise<object | undefined> {
+export async function askPlan(pane: AskOwner, input: PlanInput, style: AskStyle = {}): Promise<object | undefined> {
   const plan = input.tool_input.plan;
   if (typeof plan !== "string" || !plan.trim()) return undefined;
-  const status = await askInPopup(pane, planForm(plan), "Claude has a plan for you to review");
+  const status = await askInPopup(pane, planForm(plan), "Claude has a plan for you to review", style.signal);
   if (status?.status === "cancelled") {
     await reportState(pane, "done");
     return planDecision(input.tool_input, "dismissed");
@@ -203,7 +203,7 @@ export function questionAnswers(questions: ClaudeQuestion[], values: Record<stri
 export async function askQuestions(pane: AskOwner, input: QuestionInput, style: AskStyle = {}): Promise<object | undefined> {
   const questions = input.tool_input.questions ?? [];
   if (questions.length === 0) return undefined;
-  const status = await askInPopup(pane, questionForm(questions), "Claude has a question");
+  const status = await askInPopup(pane, questionForm(questions), "Claude has a question", style.signal);
   if (style.stopOnDismiss && status?.status === "cancelled") return dismissed(pane, "The user dismissed the question.");
   const values = submitted(status);
   if (!values) return undefined;
@@ -247,12 +247,16 @@ function runsAsJob(command: unknown, self: string[]): boolean {
   return typeof command === "string" && command.startsWith(`${shellQuote(jobRun(self))} `);
 }
 
-async function askInPopup(pane: AskOwner, spec: FormSpec, waitingFor: string): Promise<AskStatus | undefined> {
+async function askInPopup(pane: AskOwner, spec: FormSpec, waitingFor: string, signal?: AbortSignal): Promise<AskStatus | undefined> {
   await reportState(pane, "waiting", { detail: waitingFor });
   let outcome;
   try {
-    outcome = await ask(new AskStore(), spec, "qmux", Number.POSITIVE_INFINITY, {});
+    outcome = await ask(new AskStore(), spec, "qmux", Number.POSITIVE_INFINITY, { signal });
   } catch {
+    return undefined;
+  }
+  if (signal?.aborted) {
+    await reportState(pane, "working");
     return undefined;
   }
   if (outcome.status.status === "submitted") await reportState(pane, "working");

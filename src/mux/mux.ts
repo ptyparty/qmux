@@ -440,8 +440,10 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
         case "claude.register": {
           const { paneId, socket, dormant } = request.params;
           if (!panes.has(paneId)) return { ok: false, error: `no pane ${paneId}` };
-          if (socket === null) nativeClaudes.delete(paneId);
-          else {
+          if (socket === null) {
+            nativeClaudes.delete(paneId);
+            workspace.markAgent(paneId, false);
+          } else {
             nativeClaudes.set(paneId, socket);
             workspace.markAgent(paneId);
           }

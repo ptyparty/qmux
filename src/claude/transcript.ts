@@ -8,6 +8,8 @@ export type Entry =
 
 export type SessionState = "idle" | "working" | "waiting" | "ended";
 
+type TextEntry = Entry & { kind: "text" };
+
 type Block = { type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown>; tool_use_id?: string; is_error?: boolean; content?: unknown };
 
 export type StreamMessage = {
@@ -33,7 +35,9 @@ export class Transcript {
   sessionId: string | undefined;
   model: string | undefined;
   cost = 0;
-  private streaming: Entry & { kind: "text" } | undefined;
+  private streaming: TextEntry | undefined;
+  private readonly unconfirmed: TextEntry[] = [];
+  private readonly asking = new Map<string, { notice: Entry & { kind: "notice" }; tool: string }>();
   private interrupting = false;
   private readonly pending = new Set<string>();
   private readonly changed = new Set<Entry>();
@@ -68,16 +72,21 @@ export class Transcript {
     this.notice(detail, "error");
   }
 
-  permissionAsked(tool: string): void {
+  permissionAsked(requestId: string, tool: string): void {
     this.state = "waiting";
-    this.notice(`Waiting for you: allow ${tool}?`, "warning");
+    const notice: Entry & { kind: "notice" } = { kind: "notice", text: `Waiting for you: allow ${tool}?`, tone: "warning" };
+    this.asking.set(requestId, { notice, tool });
+    this.add(notice);
   }
 
-  permissionAnswered(tool: string, answer: "allowed" | "denied" | "dismissed"): void {
-    if (this.state === "waiting") this.state = "working";
-    const last = this.entries.findLast((entry) => entry.kind === "notice" && entry.text === `Waiting for you: allow ${tool}?`);
-    const label = { allowed: "Allowed", denied: "Denied", dismissed: "Dismissed" }[answer];
-    if (last?.kind === "notice") this.touch(Object.assign(last, { text: `${label} ${tool}`, tone: answer === "allowed" ? "info" : "warning" }));
+  permissionAnswered(requestId: string, answer: "allowed" | "denied" | "dismissed" | "cancelled"): void {
+    const asked = this.asking.get(requestId);
+    this.asking.delete(requestId);
+    if (this.state === "waiting" && this.asking.size === 0) this.state = "working";
+    if (!asked) return;
+    const label = { allowed: "Allowed", denied: "Denied", dismissed: "Dismissed", cancelled: "Claude withdrew its request for" }[answer];
+    const tone = answer === "allowed" || answer === "cancelled" ? "info" : "warning";
+    this.touch(Object.assign(asked.notice, { text: `${label} ${asked.tool}`, tone }));
   }
 
   replay(messages: StreamMessage[]): void {
@@ -117,6 +126,7 @@ export class Transcript {
         return;
       case "result":
         this.finishStreaming();
+        this.unconfirmed.length = 0;
         if (this.interrupting) this.pending.clear();
         this.state = this.pending.size > 0 ? "working" : "idle";
         if (typeof message.total_cost_usd === "number") this.cost = message.total_cost_usd;
@@ -133,9 +143,16 @@ export class Transcript {
   private applyEvent(event: StreamMessage["event"]): void {
     if (!event) return;
     this.working();
-    if (event.type === "content_block_start" && event.content_block?.type === "text") {
+    if (event.type === "message_start") {
+      this.finishStreaming();
+      this.unconfirmed.length = 0;
+    } else if (event.type === "content_block_start" && event.content_block?.type === "text") {
+      this.finishStreaming();
       this.streaming = { kind: "text", text: event.content_block.text ?? "", streaming: true };
+      this.unconfirmed.push(this.streaming);
       this.add(this.streaming);
+    } else if (event.type === "content_block_stop") {
+      this.finishStreaming();
     } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && this.streaming) {
       this.streaming.text += event.delta.text ?? "";
       this.touch(this.streaming);
@@ -144,9 +161,10 @@ export class Transcript {
 
   private applyAssistantBlock(block: Block): void {
     if (block.type === "text") {
-      if (this.streaming) {
-        this.streaming.text = block.text ?? this.streaming.text;
-        this.finishStreaming();
+      const streamed = this.unconfirmed.shift();
+      if (streamed) {
+        if (streamed === this.streaming) this.finishStreaming();
+        this.touch(Object.assign(streamed, { text: block.text ?? streamed.text, streaming: false }));
       } else if (block.text) {
         this.add({ kind: "text", text: block.text, streaming: false });
       }

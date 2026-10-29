@@ -282,9 +282,9 @@ export class Workspace {
     }
   }
 
-  markAgent(id: PaneId): void {
+  markAgent(id: PaneId, agent = true): void {
     const job = this.jobStatus(id);
-    if (job) job.agent = true;
+    if (job) job.agent = agent;
   }
 
   jobStatus(id: PaneId): Job | undefined {
@@ -330,7 +330,7 @@ export class Workspace {
       return;
     }
     this.host.rerun(job.id);
-    Object.assign(job, { state: "running", code: undefined, started: this.now(), finished: undefined, seen: false });
+    Object.assign(job, { state: "running", code: undefined, started: this.now(), finished: undefined, seen: false, agent: false });
   }
 
   private promoteJob(job: Job): void {

@@ -12,15 +12,14 @@ type HookOutput = { hookSpecificOutput?: { decision?: Decision; permissionDecisi
 
 const unanswered: PermissionResult = { behavior: "deny", message: "No answer from the user" };
 
-const stopOnDismiss = { stopOnDismiss: true };
-
-export async function decidePermission(request: PermissionRequest, env: Record<string, string | undefined> = process.env): Promise<PermissionResult> {
+export async function decidePermission(request: PermissionRequest, env: Record<string, string | undefined> = process.env, signal?: AbortSignal): Promise<PermissionResult> {
+  const stopOnDismiss = { stopOnDismiss: true, signal };
   const owner = askOwner(env);
   if (!owner) return { behavior: "deny", message: "Nobody could answer: this session is not running inside qmux" };
   const tool_input = request.input;
   switch (request.tool_name) {
     case "ExitPlanMode":
-      return controlResult(request, await askPlan(owner, { hook_event_name: "PermissionRequest", tool_name: "ExitPlanMode", tool_input } as PlanInput));
+      return controlResult(request, await askPlan(owner, { hook_event_name: "PermissionRequest", tool_name: "ExitPlanMode", tool_input } as PlanInput, { signal }));
     case "AskUserQuestion":
       if (tool_input.answers) return { behavior: "allow", updatedInput: tool_input };
       return controlResult(request, await askQuestions(owner, { hook_event_name: "PreToolUse", tool_name: "AskUserQuestion", tool_input } as QuestionInput, stopOnDismiss));

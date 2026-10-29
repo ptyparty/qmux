@@ -822,6 +822,26 @@ describe("Workspace", () => {
       expect(workspace.nextToastExpiry()).toBeUndefined();
     });
 
+    test("a tab keeps its five newest finished jobs, plus failures not yet looked at", () => {
+      const clock = { now: 0 };
+      const { workspace } = ide(clock);
+      const failed = workspace.runJob(2, ["false"], "failed")!;
+      const ids = [1, 2, 3, 4, 5, 6, 7].map((n) => workspace.runJob(2, ["true"], `ok ${n}`)!);
+      clock.now = 1;
+      workspace.jobFinished(failed, 1);
+      for (const id of ids) {
+        clock.now += 1;
+        workspace.jobFinished(id, 0);
+      }
+      const running = workspace.runJob(2, ["sleep", "9"], "running")!;
+      expect(workspace.tabJobs().map((job) => job.name)).toEqual(["failed", "ok 3", "ok 4", "ok 5", "ok 6", "ok 7", "running"]);
+      workspace.openJob(failed);
+      const last = workspace.runJob(2, ["true"], "last")!;
+      clock.now += 1;
+      workspace.jobFinished(last, 0);
+      expect(workspace.tabJobs().map((job) => job.id)).toEqual([failed, ...ids.slice(3), running, last]);
+    });
+
     test("a failed job stays toasted, badges its tab, and Alt a opens it", () => {
       const clock = { now: 0 };
       const { host, workspace } = ide(clock);

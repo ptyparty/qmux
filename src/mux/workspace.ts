@@ -22,6 +22,7 @@ const urgency: Record<AgentState, number> = { waiting: 4, failed: 3, done: 2, wo
 const commandUrgency: Record<CommandState, number> = { failed: 3, succeeded: 2, running: 1 };
 const popupDelayMs = 1500;
 const toastMs = 5000;
+const keptFinishedJobs = 5;
 
 export type Prompt = {
   kind: "rename-tab" | "rename-pane" | "close-tab" | "open-project" | "run-job";
@@ -269,6 +270,17 @@ export class Workspace {
     const job = this.jobs.find((candidate) => candidate.id === id);
     if (!job || job.state !== "running") return;
     Object.assign(job, { state: code === 0 ? "succeeded" : "failed", code, finished: this.now(), seen: this.popup?.id === id });
+    this.pruneFinishedJobs(job.tabId);
+  }
+
+  private pruneFinishedJobs(tabId: number): void {
+    const open = new Set(this.popups.map((popup) => popup.id));
+    const finished = this.jobs
+      .filter((job) => job.tabId === tabId && job.state !== "running" && !job.dock && !job.layout && !job.agent)
+      .sort((a, b) => b.finished! - a.finished!);
+    for (const job of finished.slice(keptFinishedJobs)) {
+      if (!open.has(job.id) && (job.state === "succeeded" || job.seen)) this.closeJob(job.id);
+    }
   }
 
   markAgent(id: PaneId): void {

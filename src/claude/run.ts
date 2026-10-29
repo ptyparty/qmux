@@ -34,6 +34,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
       inbox = await openInbox((text) => (deliverTo ? deliverTo(text) : queued.push(text)), {
         dormant: true,
         commands: () => session?.commands ?? [],
+        mode: () => session?.transcript.mode,
         wokenAgain: () => void (session ? undefined : showIfJob()),
       });
     }
@@ -66,6 +67,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   for (const signal of signals) process.on(signal, quit);
   try {
     const report = activityReporter();
+    const reportMode = modeReporter();
     session = new ClaudeSession({
       cwd: process.cwd(),
       args,
@@ -73,9 +75,14 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
       decide: (request, signal) => decidePermission(request, process.env, signal),
       onChange: () => {
         view?.render();
-        if (session) report(session.transcript.entries);
+        if (session) {
+          report(session.transcript.entries);
+          reportMode(session.transcript.mode);
+        }
       },
     });
+    session.transcript.mode ??= requestedMode(args);
+    reportMode(session.transcript.mode);
     session.transcript.replay(history);
     view = new ClaudeView(renderer, session, () => quit());
     view.render();
@@ -85,7 +92,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
     if (inbox) {
       await inbox.awaken();
       await requestCompose();
-    } else inbox = await openInbox(deliverTo, { commands: () => target.commands });
+    } else inbox = await openInbox(deliverTo, { commands: () => target.commands, mode: () => target.transcript.mode });
     const code = await Promise.race([quitting.then(() => 0), session.exited]);
     const last = session.transcript.entries.at(-1);
     if (code !== 0 && last?.kind === "notice") failure = last.text;
@@ -176,6 +183,21 @@ function activityReporter(intervalMs = 250): (entries: readonly Entry[]) => void
   };
 }
 
+function modeReporter(): (mode: string | undefined) => void {
+  let sent: string | undefined;
+  return (mode) => {
+    if (mode === undefined || mode === sent) return;
+    sent = mode;
+    void ownPaneControl((paneId) => ({ method: "agent.mode", params: { paneId, mode } }));
+  };
+}
+
+export function requestedMode(args: string[]): string | undefined {
+  const index = args.indexOf("--permission-mode");
+  if (index >= 0) return args[index + 1];
+  return args.find((arg) => arg.startsWith("--permission-mode="))?.slice("--permission-mode=".length);
+}
+
 function showIfJob(): Promise<void> {
   return ownPaneControl((paneId) => ({ method: "pane.focus", params: { paneId, onlyJob: true } }));
 }
@@ -263,7 +285,10 @@ function requestCompose(): Promise<void> {
   return ownPaneControl((paneId) => ({ method: "claude.compose", params: { paneId } }));
 }
 
-async function openInbox(onText: (text: string) => void, options: { dormant?: boolean; commands?: () => SlashCommand[]; wokenAgain?: () => void } = {}): Promise<Inbox | undefined> {
+async function openInbox(
+  onText: (text: string) => void,
+  options: { dormant?: boolean; commands?: () => SlashCommand[]; mode?: () => string | undefined; wokenAgain?: () => void } = {},
+): Promise<Inbox | undefined> {
   const { QMUX_SOCKET: control, QMUX_PANE_ID: pane, QMUX_TAB_DIR: dir } = process.env;
   const paneId = Number(pane);
   if (!control || !dir || !Number.isInteger(paneId)) return undefined;
@@ -280,7 +305,7 @@ async function openInbox(onText: (text: string) => void, options: { dormant?: bo
         for (const line of lines) {
           try {
             const { text, wake: woken, commands } = JSON.parse(line) as { text?: unknown; wake?: unknown; commands?: unknown };
-            if (commands === true) socket.write(`${JSON.stringify({ commands: options.commands?.() ?? [] })}\n`);
+            if (commands === true) socket.write(`${JSON.stringify({ commands: options.commands?.() ?? [], mode: options.mode?.() })}\n`);
             else if (woken === true) (wake ?? options.wokenAgain)?.();
             else if (typeof text === "string" && text.trim()) onText(text.trim());
           } catch {}
@@ -322,25 +347,30 @@ async function openInbox(onText: (text: string) => void, options: { dormant?: bo
 
 export async function runCompose(socket: string, name: string): Promise<void> {
   const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
-  const text = await composeMessage(renderer, name, () => fetchCommands(socket));
+  const text = await composeMessage(renderer, name, () => fetchInbox(socket));
   renderer.destroy();
   await renderer.closed;
   if (text) await deliver(socket, text);
 }
 
-function composeMessage(renderer: CliRenderer, name: string, load: () => Promise<SlashCommand[]>): Promise<string | undefined> {
+type InboxInfo = { commands: SlashCommand[]; mode?: string };
+
+function composeMessage(renderer: CliRenderer, name: string, load: () => Promise<InboxInfo>): Promise<string | undefined> {
   return new Promise((resolve) => {
     let commands: SlashCommand[] = [];
     let loading: Promise<void> | undefined;
+    const title = (mode?: string) => `To ${name}${mode ? ` (${mode} mode)` : ""} · / commands · Enter send · Alt+Enter newline · Esc cancel`;
     const fetch = () => {
       loading ??= load().then((found) => {
-        commands = found;
-        if (found.length === 0) loading = undefined;
+        commands = found.commands;
+        if (found.mode) header.content = title(found.mode);
+        if (found.commands.length === 0) loading = undefined;
         completion.update();
       });
     };
     const box = new BoxRenderable(renderer, { width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.background, paddingLeft: 1, paddingRight: 1 });
-    box.add(new TextRenderable(renderer, { content: `To ${name} · / commands · Enter send · Alt+Enter newline · Esc cancel`, fg: theme.muted, height: 1, flexShrink: 0 }));
+    const header = new TextRenderable(renderer, { content: title(), fg: theme.muted, height: 1, flexShrink: 0 });
+    box.add(header);
     const send = () => resolve(input.plainText.trim() || undefined);
     const input: TextareaRenderable = new TextareaRenderable(renderer, {
       flexGrow: 1,
@@ -354,7 +384,7 @@ function composeMessage(renderer: CliRenderer, name: string, load: () => Promise
         completion.update();
       },
     });
-    const completion = new SlashCompletion(renderer, input, { commands: () => commands, submit: send, local: false });
+    const completion = new SlashCompletion(renderer, input, { commands: () => commands, submit: send, quit: false });
     box.add(completion.list);
     box.add(input);
     renderer.root.add(box);
@@ -367,13 +397,13 @@ function composeMessage(renderer: CliRenderer, name: string, load: () => Promise
   });
 }
 
-function fetchCommands(socket: string, timeoutMs = 1000): Promise<SlashCommand[]> {
+function fetchInbox(socket: string, timeoutMs = 1000): Promise<InboxInfo> {
   return new Promise((resolve) => {
     let buffer = "";
-    const timer = setTimeout(() => resolve([]), timeoutMs);
-    const done = (commands: SlashCommand[]) => {
+    const timer = setTimeout(() => resolve({ commands: [] }), timeoutMs);
+    const done = (info: InboxInfo) => {
       clearTimeout(timer);
-      resolve(commands);
+      resolve(info);
     };
     Bun.connect({
       unix: socket,
@@ -385,13 +415,14 @@ function fetchCommands(socket: string, timeoutMs = 1000): Promise<SlashCommand[]
           if (newline < 0) return;
           connection.end();
           try {
-            done(parseCommands((JSON.parse(buffer.slice(0, newline)) as { commands?: unknown }).commands));
+            const reply = JSON.parse(buffer.slice(0, newline)) as { commands?: unknown; mode?: unknown };
+            done({ commands: parseCommands(reply.commands), mode: typeof reply.mode === "string" ? reply.mode : undefined });
           } catch {
-            done([]);
+            done({ commands: [] });
           }
         },
-        error: () => done([]),
+        error: () => done({ commands: [] }),
       },
-    }).catch(() => done([]));
+    }).catch(() => done({ commands: [] }));
   });
 }

@@ -26,9 +26,10 @@ Usage:
   qmux pane open [--right|--below|--tab|--popup] [--name NAME] [--no-focus] [--width PCT] [--height PCT] -- COMMAND...
       From inside a session, open a pane running COMMAND beside this one, or over this tab with --popup.
       A popup closes when COMMAND succeeds; --width and --height size it. Prints the new pane's id.
-  qmux claude [--resume ID|--continue] [-- CLAUDE_ARGS...]
+  qmux claude [--resume ID|--continue] [--mode MODE] [-- CLAUDE_ARGS...]
       Run a Claude Code session in this pane with qmux drawing the conversation (experimental).
       From anywhere else in the tab, Alt+c sends it a message.
+      --mode starts it in default, acceptEdits, plan or auto mode; /mode or Shift+Tab changes it later.
   qmux job run [--name NAME] [--wait] -- COMMAND...
       From inside a session, run COMMAND out of sight as a job in this tab; a toast says when it is done.
       Prints the job's id. With --wait, print the job's output as it runs and exit with its exit code.
@@ -289,11 +290,17 @@ async function claudeCommand(args: string[]): Promise<void> {
     if (!values.socket) throw new UsageError("missing --socket");
     return runCompose(values.socket, values.name ?? "Claude");
   }
-  const { values, positionals } = parse(args, { resume: { type: "string" }, continue: { type: "boolean" } });
+  const { values, positionals } = parse(args, { resume: { type: "string" }, continue: { type: "boolean" }, mode: { type: "string" } });
   if (values.resume && values.continue) throw new UsageError("pick one of --resume and --continue");
+  const { parseMode, permissionModes } = await import("./claude/commands.ts");
+  const mode = values.mode === undefined ? undefined : parseMode(values.mode);
+  if (values.mode !== undefined && !mode) throw new UsageError(`--mode must be one of ${permissionModes.join(", ")}`);
   const picksItself = ["--resume", "-r", "--continue", "-c", "--session-id", "--fork-session", "--from-pr"];
   const pick = !values.resume && !values.continue && !positionals.some((arg) => picksItself.includes(arg.split("=")[0]!));
-  return runClaude([...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...positionals], { pick });
+  return runClaude(
+    [...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...(mode ? ["--permission-mode", mode] : []), ...positionals],
+    { pick },
+  );
 }
 
 async function jobCommand(args: string[]): Promise<void> {

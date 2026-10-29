@@ -13,8 +13,17 @@ export async function showForm(spec: FormSpec, onExitSignal: () => Promise<unkno
   };
   for (const signal of signals) process.on(signal, onSignal);
   try {
-    const closed = new Promise<FormResult>((resolve) => close?.addEventListener("abort", () => resolve({ status: "cancelled" }), { once: true }));
-    return await Promise.race([runForm(renderer, new FormController(spec)), closed]);
+    let onClose = () => {};
+    const closed = new Promise<FormResult>((resolve) => {
+      onClose = () => resolve({ status: "cancelled" });
+      if (close?.aborted) onClose();
+      else close?.addEventListener("abort", onClose, { once: true });
+    });
+    try {
+      return await Promise.race([runForm(renderer, new FormController(spec)), closed]);
+    } finally {
+      close?.removeEventListener("abort", onClose);
+    }
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
     renderer.destroy();

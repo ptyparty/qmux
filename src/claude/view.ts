@@ -46,7 +46,7 @@ export class ClaudeView {
       minHeight: 1,
       maxHeight: 8,
       wrapMode: "word",
-      placeholder: "Message Claude · / commands · Enter send · Alt+Enter newline · Esc interrupt · Ctrl+d quit",
+      placeholder: "Message Claude · / commands · Enter send · Alt+Enter newline · Shift+Tab mode · Esc interrupt · Ctrl+d quit",
       placeholderColor: theme.muted,
       textColor: theme.text,
       focusedTextColor: theme.text,
@@ -73,7 +73,8 @@ export class ClaudeView {
     const { transcript } = this.session;
     const [label, color] = stateLabels[transcript.state];
     const details = [transcript.model, transcript.cost > 0 ? `$${transcript.cost.toFixed(4)}` : undefined, transcript.sessionId?.slice(0, 8)].filter(Boolean);
-    this.status.content = styled([bold(fg(color)(` ● ${label} `)), fg(theme.muted)(details.map((detail) => ` ${detail}`).join("  ·"))]);
+    const mode = transcript.mode ? [fg(theme.text)(` ${transcript.mode} mode `), ...(details.length > 0 ? [fg(theme.muted)("·")] : [])] : [];
+    this.status.content = styled([bold(fg(color)(` ● ${label} `)), ...mode, fg(theme.muted)(details.map((detail) => ` ${detail}`).join("  ·"))]);
     for (const entry of transcript.entries.slice(this.shown)) {
       const slot = this.slot(entry);
       this.slots.set(entry, slot);
@@ -98,6 +99,11 @@ export class ClaudeView {
   }
 
   private readonly onKey = (key: KeyEvent) => {
+    if (key.name === "tab" && key.shift) {
+      this.session.cycleMode();
+      key.preventDefault();
+      return;
+    }
     if (this.completion.handleKey(key)) {
       key.preventDefault();
       return;

@@ -98,6 +98,8 @@ export function permissionDecision(input: PermissionInput, answer: PermissionAns
 
 export type AskStyle = { stopOnDismiss?: boolean; signal?: AbortSignal };
 
+export const claudeExited = "Claude exited";
+
 export async function askPermission(pane: AskOwner, input: PermissionInput, style: AskStyle = {}): Promise<object | undefined> {
   const status = await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`, style.signal);
   if (style.stopOnDismiss && status?.status === "cancelled") return dismissed(pane, "The user dismissed the permission request.");
@@ -256,7 +258,7 @@ async function askInPopup(pane: AskOwner, spec: FormSpec, waitingFor: string, si
     return undefined;
   }
   if (signal?.aborted) {
-    await reportState(pane, "working");
+    if (signal.reason !== claudeExited) await reportState(pane, "working");
     return undefined;
   }
   if (outcome.status.status === "submitted") await reportState(pane, "working");

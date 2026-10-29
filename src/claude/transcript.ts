@@ -17,6 +17,7 @@ export type StreamMessage = {
   subtype?: string;
   session_id?: string;
   model?: string;
+  permissionMode?: string;
   parent_tool_use_id?: string | null;
   uuid?: string;
   isReplay?: boolean;
@@ -34,6 +35,7 @@ export class Transcript {
   state: SessionState = "idle";
   sessionId: string | undefined;
   model: string | undefined;
+  mode: string | undefined;
   cost = 0;
   private streaming: TextEntry | undefined;
   private readonly unconfirmed: TextEntry[] = [];
@@ -108,6 +110,7 @@ export class Transcript {
         if (message.subtype === "init") {
           this.sessionId = message.session_id;
           this.model = message.model;
+          this.mode = message.permissionMode ?? this.mode;
         }
         return;
       case "stream_event":

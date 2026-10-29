@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isQuit, matchCommands, parseCommands } from "./commands.ts";
+import { isQuit, matchCommands, modeArgument, nextMode, parseCommands, parseMode } from "./commands.ts";
 
 const commands = [
   { name: "compact", description: "Compact the conversation" },
@@ -12,7 +12,8 @@ describe("slash command completion", () => {
   test("matches names that start with what was typed, then ones that contain it", () => {
     expect(matchCommands(commands, "/co").map((command) => command.name)).toEqual(["compact", "context", "code-review"]);
     expect(matchCommands(commands, "/view").map((command) => command.name)).toEqual(["code-review"]);
-    expect(matchCommands(commands, "/").map((command) => command.name)).toEqual(["exit", "quit", "compact", "context", "code-review", "model"]);
+    expect(matchCommands(commands, "/").map((command) => command.name)).toEqual(["exit", "quit", "mode", "compact", "context", "code-review", "model"]);
+    expect(matchCommands(commands, "/", 8, false).map((command) => command.name)).toEqual(["mode", "compact", "context", "code-review", "model"]);
   });
 
   test("only completes the command word, and only for slash input", () => {
@@ -33,6 +34,14 @@ describe("slash command completion", () => {
       { name: "b", description: "", argumentHint: "<n>" },
     ]);
     expect(parseCommands(undefined)).toEqual([]);
+  });
+
+  test("/mode completes mode names and reads its argument", () => {
+    expect(matchCommands(commands, "/mode ").map((command) => command.name)).toEqual(["mode default", "mode acceptEdits", "mode plan", "mode auto"]);
+    expect(matchCommands(commands, "/mode A").map((command) => command.name)).toEqual(["mode acceptEdits", "mode auto"]);
+    expect([modeArgument("/mode"), modeArgument(" /mode  plan "), modeArgument("/model"), modeArgument("say /mode")]).toEqual(["", "plan", undefined, undefined]);
+    expect([parseMode("PLAN"), parseMode("bypass")]).toEqual(["plan", undefined]);
+    expect([nextMode("default"), nextMode("auto"), nextMode(undefined)]).toEqual(["acceptEdits", "default", "default"]);
   });
 
   test("/exit and /quit quit, in any case", () => {

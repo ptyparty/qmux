@@ -79,6 +79,7 @@ export class Workspace {
   readonly agents = new Map<PaneId, AgentState>();
   readonly replies = new Map<PaneId, Reply>();
   readonly activities = new Map<PaneId, string>();
+  readonly modes = new Map<PaneId, string>();
   readonly dormant = new Set<PaneId>();
   private readonly hideOnReply = new Set<PaneId>();
   private readonly lastJobs = new Map<number, PaneId>();
@@ -315,6 +316,7 @@ export class Workspace {
     this.agents.delete(id);
     this.replies.delete(id);
     this.activities.delete(id);
+    this.modes.delete(id);
     this.dormant.delete(id);
     this.commands.delete(id);
     this.selectedJob = Math.max(Math.min(this.selectedJob, this.tabJobs().length - 1), 0);
@@ -330,6 +332,7 @@ export class Workspace {
       return;
     }
     this.host.rerun(job.id);
+    this.modes.delete(job.id);
     Object.assign(job, { state: "running", code: undefined, started: this.now(), finished: undefined, seen: false, agent: false });
   }
 
@@ -909,6 +912,7 @@ export class Workspace {
       this.replies.delete(id);
       this.commands.delete(id);
       this.activities.delete(id);
+      this.modes.delete(id);
     }
   }
 

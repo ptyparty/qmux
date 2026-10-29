@@ -141,10 +141,13 @@ export class MuxView {
       const state = this.workspace.agents.get(job.id);
       if (job.agent) {
         const reply = this.workspace.replies.get(job.id);
+        const mode = this.workspace.modes.get(job.id);
+        const modeLabel = mode ? `${mode} · ` : "";
+        const textRoom = Math.max(room - Bun.stringWidth(modeLabel), 1);
         const activity = this.workspace.dormant.has(job.id) ? "not started · Alt c" : state === "working" ? this.workspace.activities.get(job.id) : undefined;
-        const text = activity ? fit(activity, room) : reply ? firstLine(reply.text, room) : fit(state ? agentLabels[state] : "ready", room);
+        const text = activity ? fit(activity, textRoom) : reply ? firstLine(reply.text, textRoom) : fit(state ? agentLabels[state] : "ready", textRoom);
         const color = state ? agentColors[state] : theme.muted;
-        return [bold(fg(color)(` ${state ? agentBadges[state] : "🧠"} ${name}`)), fg(theme.muted)(" │ "), fg(theme.text)(text)];
+        return [bold(fg(color)(` ${state ? agentBadges[state] : "🧠"} ${name}`)), fg(theme.muted)(` │ ${modeLabel}`), fg(theme.text)(text)];
       }
       const line = this.actions.jobLine(job.id) || (job.state === "running" ? "no output yet" : jobDetail(job, Date.now()));
       const shown = fit(line, room);

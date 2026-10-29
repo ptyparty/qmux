@@ -6,7 +6,7 @@ import { matchCommands, type SlashCommand } from "./commands.ts";
 export type CompletionOptions = {
   commands: () => SlashCommand[];
   submit: () => void;
-  local?: boolean;
+  quit?: boolean;
   keepsEscape?: () => boolean;
 };
 
@@ -27,7 +27,7 @@ export class SlashCompletion {
   update(): void {
     const text = this.input.plainText;
     if (this.hiddenFor !== undefined && this.hiddenFor !== text) this.hiddenFor = undefined;
-    const matches = this.hiddenFor === undefined ? matchCommands(this.options.commands(), text, 8, this.options.local ?? true) : [];
+    const matches = this.hiddenFor === undefined ? matchCommands(this.options.commands(), text, 8, this.options.quit ?? true) : [];
     if (matches.map((command) => command.name).join() !== this.matches.map((command) => command.name).join()) this.selected = 0;
     this.matches = matches;
     this.list.visible = matches.length > 0;

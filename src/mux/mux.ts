@@ -167,6 +167,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     workspace.dormant.delete(id);
     paneSessions.delete(id);
     workspace.activities.delete(id);
+    workspace.modes.delete(id);
     graphics.forgetPane(id);
   };
 
@@ -360,6 +361,14 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           const running = tab ? workspace.tabJobs(tab).filter((job) => job.state === "running") : [];
           return { ok: true, result: { refusal: refuseAgentCommand(options.config.agentJobs, command, background, running) } };
         }
+        case "agent.mode": {
+          const { paneId, mode } = request.params;
+          if (!panes.has(paneId)) return { ok: false, error: `no pane ${paneId}` };
+          workspace.modes.set(paneId, mode);
+          const job = workspace.jobStatus(paneId);
+          if (job?.dock && job.tabId === workspace.tab.id) refreshDock();
+          return { ok: true };
+        }
         case "agent.activity": {
           const { paneId, text } = request.params;
           workspace.activities.set(paneId, text);
@@ -443,6 +452,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           if (socket === null) {
             nativeClaudes.delete(paneId);
             workspace.markAgent(paneId, false);
+            workspace.modes.delete(paneId);
           } else {
             nativeClaudes.set(paneId, socket);
             workspace.markAgent(paneId);

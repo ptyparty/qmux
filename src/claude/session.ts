@@ -1,5 +1,6 @@
+import { claudeExited } from "../hooks/hook.ts";
 import type { PermissionRequest, PermissionResult } from "./permissions.ts";
-import { parseCommands, type SlashCommand } from "./commands.ts";
+import { modeArgument, nextMode, parseCommands, parseMode, permissionModes, type PermissionMode, type SlashCommand } from "./commands.ts";
 import { Transcript, type StreamMessage } from "./transcript.ts";
 
 export const claudeFlags = [
@@ -23,7 +24,7 @@ export type SessionOptions = {
   onChange: () => void;
 };
 
-type ControlResponse = { type: "control_response"; response: { subtype: string; request_id: string; response?: { commands?: unknown } } };
+type ControlResponse = { type: "control_response"; response: { subtype: string; request_id: string; error?: string; response?: { commands?: unknown } } };
 
 const initializeId = "qmux-initialize";
 
@@ -38,6 +39,7 @@ export class ClaudeSession {
   private readonly proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   private nextRequest = 1;
   private readonly asking = new Map<string, AbortController>();
+  private readonly modeChanges = new Map<string, { previous: string | undefined; requested: PermissionMode }>();
 
   constructor(private readonly options: SessionOptions) {
     this.proc = Bun.spawn(["claude", ...claudeFlags, ...options.args], {
@@ -60,9 +62,35 @@ export class ClaudeSession {
   }
 
   send(text: string): void {
+    const argument = modeArgument(text);
+    if (argument !== undefined) return this.changeMode(argument);
     const uuid = crypto.randomUUID();
     if (this.transcript.addPrompt(text, uuid)) this.write({ type: "user", uuid, message: { role: "user", content: text } });
     this.options.onChange();
+  }
+
+  cycleMode(): void {
+    this.setMode(nextMode(this.transcript.mode));
+  }
+
+  private changeMode(argument: string): void {
+    const mode = parseMode(argument);
+    if (mode) {
+      if (this.setMode(mode)) this.transcript.notice(`Permission mode: ${mode}`);
+      else this.transcript.notice("Claude has exited, so the mode wasn't changed", "error");
+    } else if (argument) this.transcript.notice(`There's no "${argument}" mode; pick one of ${permissionModes.join(", ")}`, "error");
+    else this.transcript.notice(`Permission mode: ${this.transcript.mode ?? "not known yet"} · /mode ${permissionModes.join("|")} changes it`);
+    this.options.onChange();
+  }
+
+  private setMode(mode: PermissionMode): boolean {
+    if (this.transcript.state === "ended") return false;
+    const id = `qmux-${this.nextRequest++}`;
+    this.modeChanges.set(id, { previous: this.transcript.mode, requested: mode });
+    this.transcript.mode = mode;
+    this.write({ type: "control_request", request_id: id, request: { subtype: "set_permission_mode", mode } });
+    this.options.onChange();
+    return true;
   }
 
   interrupt(): void {
@@ -79,7 +107,7 @@ export class ClaudeSession {
   }
 
   private withdrawAsks(): void {
-    for (const ask of this.asking.values()) ask.abort();
+    for (const ask of this.asking.values()) ask.abort(claudeExited);
   }
 
   private write(message: unknown): void {
@@ -116,6 +144,15 @@ export class ClaudeSession {
     if (message.type === "control_cancel_request") return void this.asking.get((message as ControlCancelRequest).request_id)?.abort();
     if (message.type === "control_response") {
       const { response } = message as ControlResponse;
+      const change = this.modeChanges.get(response.request_id);
+      if (change) {
+        this.modeChanges.delete(response.request_id);
+        if (response.subtype === "error") {
+          if (this.transcript.mode === change.requested) this.transcript.mode = change.previous;
+          this.transcript.notice(`Couldn't change the permission mode: ${response.error ?? "Claude refused"}`, "error");
+        }
+        return;
+      }
       if (response.request_id === initializeId && response.subtype === "success") this.commands = parseCommands(response.response?.commands);
       return;
     }
@@ -143,10 +180,16 @@ export class ClaudeSession {
       this.options.onChange();
       return;
     }
+    if (result.behavior === "allow") this.transcript.mode = grantedMode(result.updatedPermissions) ?? this.transcript.mode;
     const dismissed = result.behavior === "deny" && result.interrupt === true;
     if (dismissed) this.transcript.interrupt();
     this.transcript.permissionAnswered(id, result.behavior === "allow" ? "allowed" : dismissed ? "dismissed" : "denied");
     this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: result } });
     this.options.onChange();
   }
+}
+
+function grantedMode(permissions: unknown[] | undefined): string | undefined {
+  const change = permissions?.findLast((permission) => (permission as { type?: unknown }).type === "setMode") as { mode?: unknown } | undefined;
+  return typeof change?.mode === "string" ? change.mode : undefined;
 }

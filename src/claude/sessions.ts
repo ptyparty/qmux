@@ -74,7 +74,9 @@ export function historyMessages(text: string): StreamMessage[] {
     }
     if ((entry.type !== "user" && entry.type !== "assistant") || entry.isSidechain || entry.isMeta || entry.isCompactSummary || !entry.message) continue;
     const content = entry.message.content;
-    if (typeof content === "string") {
+    if (typeof content === "string" && entry.type === "assistant") {
+      if (content.trim()) messages.push({ type: "assistant", message: { content: [{ type: "text", text: content }] } });
+    } else if (typeof content === "string") {
       const prompt = promptText(content);
       if (prompt) messages.push({ type: "user", message: { content: [{ type: "text", text: prompt }] } });
     } else if (entry.type === "assistant") messages.push({ type: "assistant", message: { content: content?.filter((block) => block.type === "text" || block.type === "tool_use") } });

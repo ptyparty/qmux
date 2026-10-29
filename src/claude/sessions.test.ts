@@ -73,6 +73,7 @@ describe("Claude sessions", () => {
       { type: "user", message: { content: [{ type: "text", text: "what's this?" }, { type: "image" }] } },
       { type: "user", message: { content: [{ type: "text", text: "[Request interrupted by user]" }] } },
       { type: "assistant", message: { content: [{ type: "thinking" }, { type: "text", text: "On it" }] } },
+      { type: "assistant", message: { content: "plain" } },
       { type: "assistant", isSidechain: true, message: { content: [{ type: "text", text: "inner" }] } },
       { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1" }] } },
       { type: "last-prompt", lastPrompt: "fix it" },
@@ -83,6 +84,7 @@ describe("Claude sessions", () => {
       { type: "user", message: { content: [{ type: "text", text: "<div> isn't centered" }] } },
       { type: "user", message: { content: [{ type: "text", text: "what's this?" }] } },
       { type: "assistant", message: { content: [{ type: "text", text: "On it" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "plain" }] } },
       { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1" }] } },
     ]);
   });

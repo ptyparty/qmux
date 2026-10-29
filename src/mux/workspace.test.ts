@@ -999,6 +999,11 @@ describe("Workspace", () => {
       workspace.jobFinished(job, 1);
       press(workspace, "alt+j");
       expect(workspace.popup).toBeUndefined();
+      const merlin = workspace.tab;
+      press(workspace, "ctrl+t", "c", "alt+j");
+      expect(workspace.tab).not.toBe(merlin);
+      expect(workspace.popup).toBeUndefined();
+      expect(workspace.message).toBe("No job or question to reopen");
     });
 
     test("Alt p switches to the reply's tab, and Alt x dismisses the oldest reply toast", () => {

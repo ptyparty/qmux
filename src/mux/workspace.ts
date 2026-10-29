@@ -80,7 +80,7 @@ export class Workspace {
   readonly replies = new Map<PaneId, Reply>();
   readonly activities = new Map<PaneId, string>();
   private readonly hideOnReply = new Set<PaneId>();
-  private lastJob: PaneId | undefined;
+  private readonly lastJobs = new Map<number, PaneId>();
   private peeking = false;
   readonly commands = new Map<PaneId, CommandState>();
   readonly jobs: Job[] = [];
@@ -285,7 +285,7 @@ export class Workspace {
     if (!job || index < 0) return;
     this.active = index;
     if (!this.popups.some((popup) => popup.id === id)) this.popups.push({ id, title: job.name, tabId: job.tabId, kind: "job" });
-    this.lastJob = id;
+    this.lastJobs.set(job.tabId, id);
     if (job.state !== "running") job.seen = true;
     this.acknowledge(id);
   }
@@ -691,7 +691,8 @@ export class Workspace {
           this.shownPopups.add(hidden.id);
           return;
         }
-        if (this.lastJob !== undefined && this.jobStatus(this.lastJob)) return this.openJob(this.lastJob);
+        const last = this.lastJobs.get(this.tab.id);
+        if (last !== undefined && this.jobStatus(last)?.tabId === this.tab.id) return this.openJob(last);
         this.message = "No job or question to reopen";
         return;
       }

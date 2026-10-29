@@ -41,6 +41,8 @@ const clipboardStart = "\x1b]52;";
 const clipboardPending = /\x1b\]52;[^;\x07\x1b]*(?:;[A-Za-z0-9+/=]*\x1b?)?$/;
 const clipboardTailLength = 1024 * 1024;
 const doubleClickMs = 400;
+const privateModeSet = /\x1b\[\?([\d;]*)h/g;
+const unfinishedModeSet = /^\x1b(?:\[(?:\?[\d;]*)?)?$/;
 
 export class Pane {
   readonly frame: BoxRenderable;
@@ -52,6 +54,7 @@ export class Pane {
   private markTail = "";
   private readonly clipboard = new ClipboardScanner();
   private readonly graphics = new GraphicsScanner();
+  private readonly focusMode = new FocusModeScanner();
   private lastClick = { at: 0, x: -1, y: -1 };
 
   constructor(
@@ -178,6 +181,7 @@ export class Pane {
       scheduler: this.scheduler,
       onData: (data) => {
         this.view.write(data);
+        if (this.focusMode.scan(data)) this.pty.write(this.view.focused ? "\x1b[I" : "\x1b[O");
         this.events.onOutput?.(this.id, data);
         if (this.events.onCommand) this.scanCommandMarks(data);
         for (const text of this.clipboard.scan(data)) this.events.onClipboard?.(this.id, text);
@@ -242,6 +246,23 @@ export class Pane {
     const cwd = this.cwd();
     if (!cwd) return `Pane #${this.id}`;
     return cwd === homedir() ? "~" : basename(cwd);
+  }
+}
+
+export class FocusModeScanner {
+  private tail = "";
+
+  scan(data: Uint8Array): boolean {
+    const text = this.tail + Buffer.from(data).toString("latin1");
+    let enabled = false;
+    let scanned = 0;
+    for (const match of text.matchAll(privateModeSet)) {
+      scanned = match.index! + match[0].length;
+      if (match[1]!.split(";").includes("1004")) enabled = true;
+    }
+    const pending = text.lastIndexOf("\x1b");
+    this.tail = pending >= scanned && unfinishedModeSet.test(text.slice(pending)) ? text.slice(pending) : "";
+    return enabled;
   }
 }
 

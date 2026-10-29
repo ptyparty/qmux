@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ClipboardScanner, programOf } from "./pane.ts";
+import { ClipboardScanner, FocusModeScanner, programOf } from "./pane.ts";
 
 describe("programOf", () => {
   test("names the program from a shell's command line", () => {
@@ -13,6 +13,25 @@ describe("programOf", () => {
     expect(programOf(undefined)).toBeUndefined();
     expect(programOf("")).toBeUndefined();
     expect(programOf("cmdline_url=%E0%A4%A")).toBeUndefined();
+  });
+});
+
+describe("FocusModeScanner", () => {
+  const bytes = (text: string) => Buffer.from(text, "latin1");
+
+  test("notices focus reporting turned on, alone or with other modes", () => {
+    const scanner = new FocusModeScanner();
+    expect(scanner.scan(bytes("\x1b[?1004h"))).toBe(true);
+    expect(scanner.scan(bytes("x\x1b[?1000;1004;1006hy"))).toBe(true);
+    expect(scanner.scan(bytes("\x1b[?1004l\x1b[?10040h\x1b[?1049h"))).toBe(false);
+  });
+
+  test("notices it split across chunks", () => {
+    const scanner = new FocusModeScanner();
+    expect(scanner.scan(bytes("hello \x1b[?10"))).toBe(false);
+    expect(scanner.scan(bytes("04h"))).toBe(true);
+    expect(scanner.scan(bytes("\x1b"))).toBe(false);
+    expect(scanner.scan(bytes("[?1004h"))).toBe(true);
   });
 });
 

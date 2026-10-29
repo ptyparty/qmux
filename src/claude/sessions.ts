@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { StreamMessage } from "./transcript.ts";
 
 export type PastSession = { sessionId: string; title?: string; lastPrompt?: string; modified: number };
 export type RunningSession = { sessionId: string; name?: string; kind: string };
@@ -9,8 +10,7 @@ export type LiveSession = { paneId: number; sessionId: string; tab: string };
 export type Choice =
   | { kind: "new" }
   | { kind: "resume"; sessionId: string }
-  | { kind: "focus"; paneId: number; sessionId: string }
-  | { kind: "skip" };
+  | { kind: "focus"; paneId: number; sessionId: string };
 
 export type PickerItem = { label: string; detail: string; choice: Choice };
 
@@ -31,6 +31,7 @@ export function sessionIds(dir: string): string[] {
 }
 
 const tailBytes = 512 * 1024;
+const historyBytes = 8 * 1024 * 1024;
 
 export async function pastSessions(dir: string, limit: number): Promise<PastSession[]> {
   const recent = sessionIds(dir)
@@ -46,9 +47,54 @@ export async function pastSessions(dir: string, limit: number): Promise<PastSess
   return Promise.all(recent.map(async (session) => ({ ...session, ...describe(await readTail(join(dir, `${session.sessionId}.jsonl`))) })));
 }
 
-async function readTail(path: string): Promise<string> {
+async function readTail(path: string, bytes = tailBytes): Promise<string> {
   const file = Bun.file(path);
-  return file.slice(Math.max(file.size - tailBytes, 0)).text();
+  return file.slice(Math.max(file.size - bytes, 0)).text();
+}
+
+export async function readHistory(dir: string, sessionId: string, limit = 400): Promise<StreamMessage[]> {
+  try {
+    return historyMessages(await readTail(join(dir, `${sessionId}.jsonl`), historyBytes)).slice(-limit);
+  } catch {
+    return [];
+  }
+}
+
+type HistoryLine = { type?: string; isSidechain?: boolean; isMeta?: boolean; isCompactSummary?: boolean; message?: StreamMessage["message"] };
+
+export function historyMessages(text: string): StreamMessage[] {
+  const messages: StreamMessage[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.startsWith('{"') || (!line.includes('"type":"user"') && !line.includes('"type":"assistant"'))) continue;
+    let entry: HistoryLine;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if ((entry.type !== "user" && entry.type !== "assistant") || entry.isSidechain || entry.isMeta || entry.isCompactSummary || !entry.message) continue;
+    const content = entry.message.content;
+    if (typeof content === "string") {
+      const prompt = promptText(content);
+      if (prompt) messages.push({ type: "user", message: { content: [{ type: "text", text: prompt }] } });
+    } else if (entry.type === "assistant") messages.push({ type: "assistant", message: { content: content?.filter((block) => block.type === "text" || block.type === "tool_use") } });
+    else {
+      const results = content?.filter((block) => block.type === "tool_result") ?? [];
+      const prompt = promptText(content?.flatMap((block) => (block.type === "text" && block.text && !/^\[.*\]$/s.test(block.text.trim()) ? [block.text] : [])).join("\n") ?? "");
+      if (prompt || results.length > 0) messages.push({ type: "user", message: { content: prompt ? [...results, { type: "text", text: prompt }] : results } });
+    }
+  }
+  return messages;
+}
+
+function promptText(content: string): string | undefined {
+  const command = /<command-name>([\s\S]*?)<\/command-name>/.exec(content)?.[1]?.trim();
+  if (command) {
+    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(content)?.[1]?.trim();
+    return args ? `${command} ${args}` : command;
+  }
+  if (/^<([a-z-]+)>[\s\S]*<\/\1>$/.test(content.trim())) return undefined;
+  return content.trim() || undefined;
 }
 
 export function describe(text: string): { title?: string; lastPrompt?: string } {
@@ -83,7 +129,7 @@ export async function runningSessions(cwd: string, timeoutMs = 2000): Promise<Ru
   }
 }
 
-export function pickerItems(input: { live: LiveSession[]; running: RunningSession[]; past: PastSession[]; known: string[]; now: number; asJob?: boolean }): PickerItem[] {
+export function pickerItems(input: { live: LiveSession[]; running: RunningSession[]; past: PastSession[]; known: string[]; now: number }): PickerItem[] {
   const known = new Set(input.known);
   const past = new Map(input.past.map((session) => [session.sessionId, session]));
   const title = (sessionId: string, fallback?: string) => past.get(sessionId)?.title ?? fallback ?? sessionId.slice(0, 8);
@@ -98,7 +144,6 @@ export function pickerItems(input: { live: LiveSession[]; running: RunningSessio
     items.push({ label: title(session.sessionId, session.name), detail: "running in another terminal · open here too", choice: { kind: "resume", sessionId: session.sessionId } });
   }
   items.push({ label: "New conversation", detail: "start fresh", choice: { kind: "new" } });
-  if (input.asJob) items.push({ label: "Don't start Claude", detail: "close this job · ^s s starts it again", choice: { kind: "skip" } });
   for (const session of input.past.filter((past) => !listed.has(past.sessionId))) {
     const prompt = session.lastPrompt ? ` · › ${oneLine(session.lastPrompt, 100)}` : "";
     items.push({ label: title(session.sessionId), detail: `${age(input.now - session.modified)}${prompt}`, choice: { kind: "resume", sessionId: session.sessionId } });

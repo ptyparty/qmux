@@ -85,7 +85,7 @@ describe("Transcript", () => {
     transcript.permissionAsked("Bash");
     transcript.interrupt();
     feed(transcript, { type: "result", subtype: "error_during_execution", is_error: true });
-    transcript.permissionAnswered("Bash", false);
+    transcript.permissionAnswered("Bash", "denied");
     expect(transcript.state).toBe("idle");
   });
 
@@ -104,8 +104,67 @@ describe("Transcript", () => {
     transcript.permissionAsked("Write");
     expect(transcript.state).toBe("waiting");
     expect(transcript.entries).toEqual([{ kind: "notice", text: "Waiting for you: allow Write?", tone: "warning" }]);
-    transcript.permissionAnswered("Write", false);
+    transcript.permissionAnswered("Write", "denied");
     expect(transcript.state).toBe("working");
     expect(transcript.entries).toEqual([{ kind: "notice", text: "Denied Write", tone: "warning" }]);
+  });
+
+  test("a dismissed permission says so", () => {
+    const transcript = feed(new Transcript(), init);
+    transcript.permissionAsked("Bash");
+    transcript.permissionAnswered("Bash", "dismissed");
+    expect(transcript.entries).toEqual([{ kind: "notice", text: "Dismissed Bash", tone: "warning" }]);
+  });
+
+  test("a prompt queued during a turn keeps Claude working until it is taken up and answered", () => {
+    const transcript = feed(new Transcript(), init);
+    transcript.addPrompt("first", "u1");
+    feed(transcript, { type: "user", isReplay: true, uuid: "u1", message: { content: "first" } });
+    transcript.addPrompt("second", "u2");
+    feed(transcript, { type: "result", subtype: "success" });
+    expect(transcript.state).toBe("working");
+    feed(transcript, { type: "user", isReplay: true, uuid: "u2", message: { content: "second" } }, { type: "result", subtype: "success" });
+    expect(transcript.state).toBe("idle");
+    expect(transcript.entries).toEqual([
+      { kind: "user", text: "first" },
+      { kind: "user", text: "second" },
+    ]);
+  });
+
+  test("an interrupt drops prompts still queued", () => {
+    const transcript = feed(new Transcript(), init);
+    transcript.addPrompt("first", "u1");
+    transcript.interrupt();
+    feed(transcript, { type: "result", subtype: "error_during_execution", is_error: true });
+    expect(transcript.state).toBe("idle");
+  });
+
+  test("skill text loaded into the conversation isn't shown, other user text is a quiet notice", () => {
+    const transcript = feed(
+      new Transcript(),
+      init,
+      { type: "user", isSynthetic: true, message: { content: [{ type: "text", text: "Base directory for this skill: /skills/espalier\n\n# espalier" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "Stop hook feedback:\nmore detail" }] } },
+    );
+    expect(transcript.entries).toEqual([{ kind: "notice", text: "Stop hook feedback: …", tone: "info" }]);
+  });
+
+  test("replaying a resumed conversation shows its prompts, replies and tools", () => {
+    const transcript = new Transcript();
+    transcript.replay([
+      { type: "user", message: { content: [{ type: "text", text: "fix it" }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/a.ts" } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "Fixed." }] } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "make" } }] } },
+    ]);
+    expect(transcript.entries).toEqual([
+      { kind: "user", text: "fix it" },
+      { kind: "tool", id: "t1", name: "Read", summary: "/a.ts", status: "ok" },
+      { kind: "text", text: "Fixed.", streaming: false },
+      { kind: "tool", id: "t2", name: "Bash", summary: "make", status: "error" },
+      { kind: "notice", text: "Resumed · earlier messages above", tone: "info" },
+    ]);
+    expect(transcript.state).toBe("idle");
   });
 });

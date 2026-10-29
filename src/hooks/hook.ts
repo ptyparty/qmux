@@ -96,9 +96,18 @@ export function permissionDecision(input: PermissionInput, answer: PermissionAns
   }
 }
 
-export async function askPermission(pane: AskOwner, input: PermissionInput): Promise<object | undefined> {
-  const values = submitted(await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`));
+export type AskStyle = { stopOnDismiss?: boolean };
+
+export async function askPermission(pane: AskOwner, input: PermissionInput, style: AskStyle = {}): Promise<object | undefined> {
+  const status = await askInPopup(pane, permissionForm(input), `Claude wants to use ${input.tool_name}`);
+  if (style.stopOnDismiss && status?.status === "cancelled") return dismissed(pane, "The user dismissed the permission request.");
+  const values = submitted(status);
   return values && permissionDecision(input, values);
+}
+
+async function dismissed(pane: AskOwner, message: string): Promise<object> {
+  await reportState(pane, "done");
+  return { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", message, interrupt: true } } };
 }
 
 export type PlanInput = { hook_event_name: "PermissionRequest"; tool_name: "ExitPlanMode"; tool_input: { plan?: unknown; [key: string]: unknown } };
@@ -191,10 +200,12 @@ export function questionAnswers(questions: ClaudeQuestion[], values: Record<stri
   return answers;
 }
 
-export async function askQuestions(pane: AskOwner, input: QuestionInput): Promise<object | undefined> {
+export async function askQuestions(pane: AskOwner, input: QuestionInput, style: AskStyle = {}): Promise<object | undefined> {
   const questions = input.tool_input.questions ?? [];
   if (questions.length === 0) return undefined;
-  const values = submitted(await askInPopup(pane, questionForm(questions), "Claude has a question"));
+  const status = await askInPopup(pane, questionForm(questions), "Claude has a question");
+  if (style.stopOnDismiss && status?.status === "cancelled") return dismissed(pane, "The user dismissed the question.");
+  const values = submitted(status);
   if (!values) return undefined;
   return {
     hookSpecificOutput: {

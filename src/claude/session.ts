@@ -10,6 +10,7 @@ export const claudeFlags = [
   "stream-json",
   "--verbose",
   "--include-partial-messages",
+  "--replay-user-messages",
   "--permission-prompt-tool",
   "stdio",
 ];
@@ -55,7 +56,8 @@ export class ClaudeSession {
   }
 
   send(text: string): void {
-    if (this.transcript.addPrompt(text)) this.write({ type: "user", message: { role: "user", content: text } });
+    const uuid = crypto.randomUUID();
+    if (this.transcript.addPrompt(text, uuid)) this.write({ type: "user", uuid, message: { role: "user", content: text } });
     this.options.onChange();
   }
 
@@ -120,7 +122,9 @@ export class ClaudeSession {
     const result: PermissionResult = await this.options
       .decide({ tool_name: tool, input: request.input ?? {}, permission_suggestions: request.permission_suggestions })
       .catch((error: Error) => ({ behavior: "deny", message: `qmux couldn't ask the user: ${error.message}` }));
-    this.transcript.permissionAnswered(tool, result.behavior === "allow");
+    const dismissed = result.behavior === "deny" && result.interrupt === true;
+    if (dismissed) this.transcript.interrupt();
+    this.transcript.permissionAnswered(tool, result.behavior === "allow" ? "allowed" : dismissed ? "dismissed" : "denied");
     this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: result } });
     this.options.onChange();
   }

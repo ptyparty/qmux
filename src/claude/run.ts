@@ -6,7 +6,7 @@ import { theme } from "../mux/theme.ts";
 import { decidePermission } from "./permissions.ts";
 import { declineHooks, defaultHookCommand, hooksDeclined, installHooks, missingHooks, readSettings, settingsPaths, writeSettings } from "./hooks-setup.ts";
 import { pick } from "./picker.ts";
-import { pastSessions, pickerItems, projectDir, runningSessions, sessionIds, type Choice, type LiveSession } from "./sessions.ts";
+import { pastSessions, pickerItems, projectDir, readHistory, runningSessions, sessionIds, type Choice, type LiveSession } from "./sessions.ts";
 import { ClaudeSession } from "./session.ts";
 import type { Entry } from "./transcript.ts";
 import { ClaudeView, composeKeyBindings } from "./view.ts";
@@ -49,9 +49,9 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
     await inbox?.stop();
     renderer.destroy();
     await renderer.closed;
-    if (choice?.kind === "skip") await closeOwnJob();
     return;
   }
+  const history = choice.kind === "resume" ? await readHistory(projectDir(process.cwd()), choice.sessionId) : [];
   if (choice.kind === "resume") args = ["--resume", choice.sessionId, ...args];
   if (inbox) await hideOwnJob();
   let view: ClaudeView | undefined;
@@ -71,6 +71,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
         if (session) report(session.transcript.entries);
       },
     });
+    session.transcript.replay(history);
     view = new ClaudeView(renderer, session, () => quit());
     view.render();
     const target = session;
@@ -124,10 +125,9 @@ async function chooseSession(renderer: CliRenderer): Promise<Choice | undefined>
   const cwd = process.cwd();
   const dir = projectDir(cwd);
   const known = sessionIds(dir);
-  const asJob = runningAsJob();
-  if (known.length === 0 && !asJob) return { kind: "new" };
-  const [past, running, live] = known.length === 0 ? [[], [], []] : await Promise.all([pastSessions(dir, 8), runningSessions(cwd), liveSessions()]);
-  const items = pickerItems({ live, running, past, known, now: Date.now(), asJob });
+  if (known.length === 0) return { kind: "new" };
+  const [past, running, live] = await Promise.all([pastSessions(dir, 8), runningSessions(cwd), liveSessions()]);
+  const items = pickerItems({ live, running, past, known, now: Date.now() });
   if (items.length === 1) return items[0]!.choice;
   await showIfJob();
   return pick(renderer, "Claude", cwd, items.map((item) => ({ label: item.label, detail: item.detail, value: item.choice })));
@@ -169,10 +169,6 @@ function activityReporter(intervalMs = 250): (entries: readonly Entry[]) => void
     pending = latestActivity(entries);
     timer ??= setTimeout(flush, intervalMs);
   };
-}
-
-function closeOwnJob(): Promise<void> {
-  return ownPaneControl((jobId) => ({ method: "job.stop", params: { jobId } }));
 }
 
 function showIfJob(): Promise<void> {

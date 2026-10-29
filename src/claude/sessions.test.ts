@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { age, describe as describeSession, pastSessions, pickerItems, projectDir } from "./sessions.ts";
+import { age, describe as describeSession, historyMessages, pastSessions, pickerItems, projectDir } from "./sessions.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-sessions-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -63,11 +63,27 @@ describe("Claude sessions", () => {
     expect([age(30_000), age(5 * 60_000), age(3 * 3_600_000), age(50 * 3_600_000)]).toEqual(["just now", "5m ago", "3h ago", "2d ago"]);
   });
 
-  test("as a job, the picker offers not to start Claude, right after New", () => {
-    const items = pickerItems({ live: [], running: [], past: [], known: [], now: 0, asJob: true });
-    expect(items.map((item) => [item.label, item.choice])).toEqual([
-      ["New conversation", { kind: "new" }],
-      ["Don't start Claude", { kind: "skip" }],
+  test("history keeps the main conversation's prompts, replies and tool results", () => {
+    const lines = [
+      { type: "user", message: { content: "fix it" } },
+      { type: "user", isMeta: true, message: { content: "caveat" } },
+      { type: "user", message: { content: "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>high <path></command-args>" } },
+      { type: "user", message: { content: "<local-command-stdout>ok</local-command-stdout>" } },
+      { type: "user", message: { content: "<div> isn't centered" } },
+      { type: "user", message: { content: [{ type: "text", text: "what's this?" }, { type: "image" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "[Request interrupted by user]" }] } },
+      { type: "assistant", message: { content: [{ type: "thinking" }, { type: "text", text: "On it" }] } },
+      { type: "assistant", isSidechain: true, message: { content: [{ type: "text", text: "inner" }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1" }] } },
+      { type: "last-prompt", lastPrompt: "fix it" },
+    ];
+    expect(historyMessages(lines.map((line) => JSON.stringify(line)).join("\n"))).toEqual([
+      { type: "user", message: { content: [{ type: "text", text: "fix it" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "/review high <path>" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "<div> isn't centered" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "what's this?" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "On it" }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1" }] } },
     ]);
   });
 });

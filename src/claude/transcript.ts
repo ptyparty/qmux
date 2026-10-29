@@ -16,6 +16,9 @@ export type StreamMessage = {
   session_id?: string;
   model?: string;
   parent_tool_use_id?: string | null;
+  uuid?: string;
+  isReplay?: boolean;
+  isSynthetic?: boolean;
   message?: { content?: string | Block[] };
   event?: { type: string; content_block?: Block; delta?: { type: string; text?: string } };
   total_cost_usd?: number;
@@ -32,6 +35,7 @@ export class Transcript {
   cost = 0;
   private streaming: Entry & { kind: "text" } | undefined;
   private interrupting = false;
+  private readonly pending = new Set<string>();
   private readonly changed = new Set<Entry>();
 
   takeChanges(): Entry[] {
@@ -44,12 +48,13 @@ export class Transcript {
     this.interrupting = true;
   }
 
-  addPrompt(text: string): boolean {
+  addPrompt(text: string, uuid?: string): boolean {
     if (this.state === "ended") {
       this.notice("Claude has exited, so this message wasn't sent", "error");
       return false;
     }
     this.add({ kind: "user", text });
+    if (uuid) this.pending.add(uuid);
     if (this.state !== "waiting") this.state = "working";
     return true;
   }
@@ -68,10 +73,23 @@ export class Transcript {
     this.notice(`Waiting for you: allow ${tool}?`, "warning");
   }
 
-  permissionAnswered(tool: string, allowed: boolean): void {
+  permissionAnswered(tool: string, answer: "allowed" | "denied" | "dismissed"): void {
     if (this.state === "waiting") this.state = "working";
     const last = this.entries.findLast((entry) => entry.kind === "notice" && entry.text === `Waiting for you: allow ${tool}?`);
-    if (last?.kind === "notice") this.touch(Object.assign(last, { text: `${allowed ? "Allowed" : "Denied"} ${tool}`, tone: allowed ? "info" : "warning" }));
+    const label = { allowed: "Allowed", denied: "Denied", dismissed: "Dismissed" }[answer];
+    if (last?.kind === "notice") this.touch(Object.assign(last, { text: `${label} ${tool}`, tone: answer === "allowed" ? "info" : "warning" }));
+  }
+
+  replay(messages: StreamMessage[]): void {
+    for (const message of messages) {
+      for (const block of blocks(message)) {
+        if (message.type === "assistant") this.applyAssistantBlock(block);
+        else if (block.type === "tool_result") this.applyUserBlock(block);
+        else if (block.type === "text" && block.text) this.add({ kind: "user", text: block.text });
+      }
+    }
+    for (const entry of this.entries) if (entry.kind === "tool" && entry.status === "running") entry.status = "error";
+    if (this.entries.length > 0) this.notice("Resumed · earlier messages above");
   }
 
   apply(message: StreamMessage): void {
@@ -90,11 +108,17 @@ export class Transcript {
         for (const block of blocks(message)) this.applyAssistantBlock(block);
         return;
       case "user":
+        if (message.isReplay) {
+          if (message.uuid) this.pending.delete(message.uuid);
+          return;
+        }
+        if (message.isSynthetic) return;
         for (const block of blocks(message)) this.applyUserBlock(block);
         return;
       case "result":
         this.finishStreaming();
-        this.state = "idle";
+        if (this.interrupting) this.pending.clear();
+        this.state = this.pending.size > 0 ? "working" : "idle";
         if (typeof message.total_cost_usd === "number") this.cost = message.total_cost_usd;
         if (message.is_error && !this.interrupting) this.notice(message.result || `Claude stopped: ${message.subtype}`, "error");
         this.interrupting = false;
@@ -136,7 +160,9 @@ export class Transcript {
       const tool = this.entries.find((entry) => entry.kind === "tool" && entry.id === block.tool_use_id);
       if (tool?.kind === "tool") this.touch(Object.assign(tool, { status: block.is_error ? "error" : "ok" }));
     } else if (block.type === "text" && block.text) {
-      this.notice(block.text.replace(/^\[|\]$/g, ""), "warning");
+      const bracketed = /^\[(.*)\]$/s.exec(block.text.trim());
+      if (bracketed) this.notice(bracketed[1]!, "warning");
+      else this.notice(oneLine(block.text));
     }
   }
 

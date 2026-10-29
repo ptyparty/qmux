@@ -1,4 +1,4 @@
-import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
+import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, swapPanes, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
 import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type JobSpec, type LayoutEntry } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
@@ -657,6 +657,11 @@ export class Workspace {
       case "focus": {
         const target = neighbor(this.tab.root, this.tab.focused, command.direction);
         if (target !== undefined) Object.assign(this.tab, { focused: target, zoomed: false });
+        return;
+      }
+      case "swap-pane": {
+        const target = neighbor(this.tab.root, this.tab.focused, command.direction);
+        if (target !== undefined) Object.assign(this.tab, { root: swapPanes(this.tab.root, this.tab.focused, target), zoomed: false });
         return;
       }
       case "cycle-pane": {

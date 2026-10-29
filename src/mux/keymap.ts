@@ -6,6 +6,7 @@ export type Command =
   | { type: "mode"; mode: Mode }
   | { type: "focus"; direction: Direction }
   | { type: "cycle-pane"; delta: number }
+  | { type: "swap-pane"; direction: Direction }
   | { type: "new-pane"; axis?: Axis }
   | { type: "tab-pane" }
   | { type: "close-pane" }
@@ -98,6 +99,7 @@ export const keymap: Record<Mode, ModeKeys> = {
   pane: {
     bindings: [
       ...directional(vim, "", (direction) => ({ type: "focus", direction })),
+      ...directional(dvorak, "alt+", (direction) => ({ type: "swap-pane", direction })),
       { keys: ["p"], command: { type: "cycle-pane", delta: 1 } },
       { keys: ["n"], command: { type: "new-pane" }, then: "normal" },
       { keys: ["d"], command: { type: "new-pane", axis: "column" }, then: "normal" },
@@ -110,6 +112,7 @@ export const keymap: Record<Mode, ModeKeys> = {
     ],
     hints: [
       { keys: "←↓↑→/hjkl", description: "focus" },
+      { keys: "Alt h/t/n/s", description: "move" },
       { keys: "n", description: "new" },
       { keys: "d", description: "new below" },
       { keys: "r", description: "new right" },

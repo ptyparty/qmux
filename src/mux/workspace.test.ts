@@ -146,6 +146,17 @@ describe("Workspace", () => {
     expect(workspace.tab.focused).toBe(1);
   });
 
+  test("pane mode moves the focused pane with the focus keys", () => {
+    const workspace = new Workspace(new FakeHost());
+    press(workspace, "ctrl+p", "r", "ctrl+p", "alt+h");
+    expect(paneIds(workspace.tab.root)).toEqual([2, 1]);
+    expect([workspace.tab.focused, workspace.mode]).toEqual([2, "pane"]);
+    press(workspace, "alt+right");
+    expect(paneIds(workspace.tab.root)).toEqual([1, 2]);
+    press(workspace, "alt+s");
+    expect(paneIds(workspace.tab.root)).toEqual([1, 2]);
+  });
+
   test("new pane picks the split direction from the pane's shape", () => {
     const workspace = new Workspace(new FakeHost());
     press(workspace, "ctrl+p", "n");

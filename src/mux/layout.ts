@@ -83,6 +83,18 @@ export function removePane(root: LayoutNode, target: PaneId): LayoutNode | null 
   return { ...root, children };
 }
 
+export function swapPanes(root: LayoutNode, a: PaneId, b: PaneId): LayoutNode {
+  const swap = (id: PaneId) => (id === a ? b : id === b ? a : id);
+  switch (root.kind) {
+    case "pane":
+      return leaf(swap(root.id));
+    case "tabs":
+      return { ...root, panes: root.panes.map(swap) };
+    case "split":
+      return { ...root, children: root.children.map((child) => swapPanes(child, a, b)) };
+  }
+}
+
 export function paneIds(root: LayoutNode): PaneId[] {
   switch (root.kind) {
     case "pane":

@@ -11,6 +11,7 @@ import {
   removePane,
   selectPaneTab,
   splitPane,
+  swapPanes,
   type LayoutNode,
 } from "./layout.ts";
 
@@ -55,6 +56,16 @@ describe("layout", () => {
     expect(neighbor(root, 3, "up")).toBe(2);
     expect(neighbor(root, 1, "left")).toBeUndefined();
     expect(neighbor(root, 2, "right")).toBeUndefined();
+  });
+
+  test("swapping two panes trades their places, inside pane tabs too", () => {
+    expect(paneRects(swapPanes(grid(), 1, 3)).get(3)).toEqual({ x: 0, y: 0, width: 0.5, height: 1 });
+    const root = addPaneTab(grid(), 2, 4);
+    expect(swapPanes(root, 4, 1)).toEqual({
+      kind: "split",
+      axis: "row",
+      children: [leaf(4), { kind: "split", axis: "column", children: [{ kind: "tabs", panes: [2, 1], selected: 1 }, leaf(3)] }],
+    });
   });
 
   describe("pane tabs", () => {

@@ -207,6 +207,19 @@ export async function askQuestions(pane: AskOwner, input: QuestionInput): Promis
 
 export type BashInput = { hook_event_name: "PreToolUse"; tool_name: "Bash"; tool_input: { command?: unknown; description?: unknown; run_in_background?: unknown; [key: string]: unknown } };
 
+async function commandRefusal(pane: AskOwner, input: BashInput): Promise<string | undefined> {
+  const { command, run_in_background } = input.tool_input;
+  if (typeof command !== "string") return undefined;
+  try {
+    const response = await sendControl(pane.socket, { method: "agent.command", params: { paneId: pane.paneId, command, background: run_in_background === true } }, 300);
+    const refusal = response.ok ? (response.result as { refusal?: unknown } | undefined)?.refusal : undefined;
+    return typeof refusal === "string" ? refusal : undefined;
+  } catch (error) {
+    if (!(error instanceof ControlError)) throw error;
+    return undefined;
+  }
+}
+
 export function backgroundAsJob(input: BashInput, self: string[]): object | undefined {
   const { command, description, run_in_background } = input.tool_input;
   if (run_in_background !== true || typeof command !== "string" || /^\s*qmux\s+job\b/.test(command)) return undefined;
@@ -253,6 +266,10 @@ export async function runHook(stdin: string, env: Record<string, string | undefi
   }
   let pane = askOwner(env);
   if (input.hook_event_name === "PreToolUse" && input.tool_name === "Bash") {
+    const attached = pane ? undefined : attachedPaneEnv(input.session_id, procDir);
+    const owner = pane ?? (attached && askOwner(attached));
+    const refusal = owner && (await commandRefusal(owner, input as unknown as BashInput));
+    if (refusal) return JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: refusal } });
     const job = pane && backgroundAsJob(input as unknown as BashInput, selfCommand());
     return job && JSON.stringify(job);
   }

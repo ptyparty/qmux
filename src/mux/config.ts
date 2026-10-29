@@ -53,6 +53,9 @@ export const configSchema = z
     env: z.record(z.string(), z.string()).default({}).describe("Environment variables set in every pane, such as EDITOR"),
     scrollback: z.number().positive().max(4000).default(50).describe("Megabytes of history each pane keeps; 50 is roughly 70,000 lines at 80 columns"),
     untrackedCommands: z.array(z.string()).default([]).describe("Programs that never get a long-running command badge, such as editors and agents"),
+    agentJobs: z
+      .array(z.string().regex(/^[^\s.][^\s]*$/, "agentJobs are a program path like \"scripts/up\", without arguments or a leading ./"))
+      .default([]).describe("Commands, such as \"scripts/up\", that agents must run in the background as jobs; foreground runs are refused"),
     layouts: z.record(z.string(), layoutEntry).default({}),
     tabs: z
       .record(z.string(), z.object({ layout: z.string(), cwd: z.string().optional().describe("Working directory; defaults to defaultCwd") }).strict())

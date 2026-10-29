@@ -1,7 +1,7 @@
 import { existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { selfCommand, shellQuote } from "../ask/hosts.ts";
+import { selfCommand, shellQuote, shellWords } from "../ask/hosts.ts";
 import { claudeConfigDir } from "./sessions.ts";
 
 type HookCommand = { type: string; command?: string; timeout?: number; async?: boolean; asyncRewake?: boolean; [key: string]: unknown };
@@ -32,41 +32,6 @@ export function settingsPaths(configDir = claudeConfigDir()): { user: string; lo
 
 export function defaultHookCommand(): string {
   return shellQuote([...selfCommand(), "hook"]);
-}
-
-export function shellWords(command: string): string[] {
-  const words: string[] = [];
-  let word = "";
-  let started = false;
-  for (let index = 0; index < command.length; index++) {
-    const char = command[index]!;
-    if (char === "'") {
-      const end = command.indexOf("'", index + 1);
-      word += command.slice(index + 1, end < 0 ? undefined : end);
-      index = end < 0 ? command.length : end;
-      started = true;
-    } else if (char === '"') {
-      let end = index + 1;
-      for (; end < command.length && command[end] !== '"'; end++) {
-        if (command[end] === "\\") end++;
-        word += command[end] ?? "";
-      }
-      index = end;
-      started = true;
-    } else if (char === "\\") {
-      word += command[++index] ?? "";
-      started = true;
-    } else if (/\s/.test(char)) {
-      if (started) words.push(word);
-      word = "";
-      started = false;
-    } else {
-      word += char;
-      started = true;
-    }
-  }
-  if (started) words.push(word);
-  return words;
 }
 
 function isQmuxHook(command: string | undefined, wake: boolean): boolean {

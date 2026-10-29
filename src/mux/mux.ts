@@ -13,6 +13,7 @@ import { Pane, type CommandEvent } from "./pane.ts";
 import { ReadScheduler } from "./pty.ts";
 import { TabDirs } from "./tab-dirs.ts";
 import { LineTail } from "./tail.ts";
+import { refuseAgentCommand } from "./agent-jobs.ts";
 import { Tray, trayWidgets } from "./tray.ts";
 import { MuxView } from "./view.ts";
 import { Workspace, type PaneHost, type PopupSize } from "./workspace.ts";
@@ -334,6 +335,12 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
         case "agent.session":
           trackSession(request.params.paneId, request.params.sessionId, false);
           return { ok: true };
+        case "agent.command": {
+          const { paneId, command, background } = request.params;
+          const tab = workspace.tabOf(paneId);
+          const running = tab ? workspace.tabJobs(tab).filter((job) => job.state === "running") : [];
+          return { ok: true, result: { refusal: refuseAgentCommand(options.config.agentJobs, command, background, running) } };
+        }
         case "claude.sessions":
           return {
             ok: true,

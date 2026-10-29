@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { installHooks, missingHooks, shellWords, type Settings } from "./hooks-setup.ts";
+import { shellWords } from "../ask/hosts.ts";
+import { installHooks, missingHooks, type Settings } from "./hooks-setup.ts";
 
 const ours = "/home/me/.bun/bin/bun /home/me/.bun/bin/qmux hook";
 const hook = (timeout: number) => [{ type: "command", command: ours, timeout }];

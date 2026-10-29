@@ -14,6 +14,16 @@ Copy or symlink `skills/qmux-ask` into `~/.claude/skills/` so agents know when a
 
 The `ask` and `wait` tools are marked read-only, so Claude Code can use them in plan mode without asking permission.
 
+### macOS support
+
+qmux runs on macOS, but it needs `setsid`, which is available in the util-linux package. Homebrew installs util-linux keg-only (off your PATH), so link just `setsid` to minimize impact to your runtime:
+
+```bash
+brew install util-linux
+mkdir -p ~/.local/bin   # or any directory on your PATH
+ln -s "$(brew --prefix util-linux)/bin/setsid" ~/.local/bin/setsid
+```
+
 ## Usage
 
 ```bash

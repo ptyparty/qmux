@@ -1057,6 +1057,19 @@ describe("Workspace", () => {
       expect(workspace.message).toBe("No job or question to reopen");
     });
 
+    test("Alt j opens the newest job in the tab when none has been opened", () => {
+      const clock = { now: 0 };
+      const { workspace } = ide(clock);
+      workspace.runJob(2, ["make"]);
+      clock.now = 10;
+      const newest = workspace.runJob(2, ["make", "test"])!;
+      clock.now = 20;
+      press(workspace, "ctrl+t", "c");
+      workspace.runJob(workspace.tab.focused, ["elsewhere"]);
+      press(workspace, "ctrl+t", "a", "alt+j");
+      expect(workspace.popup).toMatchObject({ id: newest, kind: "job" });
+    });
+
     test("Alt p switches to the reply's tab, and Alt x dismisses the oldest reply toast", () => {
       const clock = { now: 0 };
       const { host, workspace } = ide(clock);

@@ -739,6 +739,8 @@ export class Workspace {
         }
         const last = this.lastJobs.get(this.tab.id);
         if (last !== undefined && this.jobStatus(last)?.tabId === this.tab.id) return this.openJob(last);
+        const newest = this.jobs.filter((job) => job.tabId === this.tab.id).reduce<Job | undefined>((found, job) => (found && found.started > job.started ? found : job), undefined);
+        if (newest) return this.openJob(newest.id);
         this.message = "No job or question to reopen";
         return;
       }

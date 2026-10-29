@@ -61,9 +61,8 @@ export interface PaneHost {
 
 export type InputKey = Key & { sequence: string };
 
-const popupPassthrough = new Set(["ctrl+t", "ctrl+o"]);
-const jobPopupPassthrough = new Set([...popupPassthrough, "ctrl+s", "alt+j"]);
-const askPopupPassthrough = new Set([...popupPassthrough, "alt+j"]);
+const popupPassthrough = new Set(["ctrl+t", "ctrl+o", "alt+x", "alt+a", "alt+p", "alt+c", "alt+j"]);
+const jobPopupPassthrough = new Set([...popupPassthrough, "ctrl+s"]);
 
 export class Workspace {
   tabs: Tab[] = [];
@@ -518,7 +517,7 @@ export class Workspace {
       return true;
     }
     const popup = this.popup;
-    const passthrough = popup?.kind === "job" ? jobPopupPassthrough : popup?.kind === "ask" ? askPopupPassthrough : popupPassthrough;
+    const passthrough = popup?.kind === "job" ? jobPopupPassthrough : popupPassthrough;
     const finishedJob = popup?.kind === "job" && this.jobStatus(popup.id)?.state !== "running";
     if (finishedJob && this.mode === "normal" && !passthrough.has(keyName(key))) {
       return this.finishedJobKey(popup!.id, key);
@@ -713,6 +712,10 @@ export class Workspace {
       case "toggle-job": {
         const popup = this.popup;
         if (popup?.kind === "job") return this.popupExited(popup.id);
+        if (popup?.kind === "view") {
+          this.host.destroy(popup.id);
+          return this.popupExited(popup.id);
+        }
         if (popup?.kind === "ask") {
           popup.hidden = true;
           return;

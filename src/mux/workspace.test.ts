@@ -1119,6 +1119,26 @@ describe("Workspace", () => {
     expect(workspace.hiddenAsks()).toEqual([]);
   });
 
+  test("Alt keys reach qmux over every kind of popup", () => {
+    const host = new FakeHost();
+    const workspace = new Workspace(host);
+    const agent = workspace.tab.focused;
+    workspace.setAgentState(agent, "done", "Built it");
+    workspace.openPopup(50, "Deploy?");
+    expect(press(workspace, "alt+p", "alt+h")).toEqual([true, false]);
+    expect(host.peeked.map(([id]) => id)).toEqual([agent]);
+    workspace.openViewPopup(60, "peek", agent);
+    expect(press(workspace, "alt+x", "alt+j")).toEqual([false, true]);
+    expect(host.destroyed).toContain(60);
+    expect(workspace.popup?.id).toBe(50);
+    workspace.popupExited(50);
+    const job = workspace.runJob(agent, ["make"])!;
+    press(workspace, "ctrl+s", "return");
+    expect(workspace.popup).toMatchObject({ id: job, kind: "job" });
+    workspace.jobFinished(job, 0);
+    expect(press(workspace, "alt+a")).toEqual([true]);
+  });
+
   test("Alt c messages the focused native Claude, or the tab's first one", () => {
     const host = new FakeHost();
     const workspace = new Workspace(host);

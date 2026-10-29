@@ -14,6 +14,7 @@ export type Command =
   | { type: "rename-pane" }
   | { type: "new-tab" }
   | { type: "close-tab" }
+  | { type: "restart-tab" }
   | { type: "open-project" }
   | { type: "rename-tab" }
   | { type: "cycle-tab"; delta: number }
@@ -132,6 +133,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["c"], command: { type: "new-tab" }, then: "normal" },
       { keys: ["x"], command: { type: "close-tab" }, then: "normal" },
       { keys: ["r"], command: { type: "rename-tab" }, then: "normal" },
+      { keys: ["shift+r"], command: { type: "restart-tab" }, then: "normal" },
       { keys: ["o"], command: { type: "open-project" }, then: "normal" },
       { keys: ["a"], command: { type: "last-tab" }, then: "normal" },
       { keys: ["w"], command: { type: "mode", mode: "tray" } },
@@ -144,6 +146,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "c", description: "new" },
       { keys: "x", description: "close" },
       { keys: "r", description: "rename" },
+      { keys: "R", description: "restart" },
       { keys: "o", description: "open project" },
       { keys: "a", description: "last tab" },
       { keys: "w", description: "tray" },

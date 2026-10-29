@@ -1,9 +1,9 @@
 import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, swapPanes, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
-import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type JobSpec, type LayoutEntry } from "./config.ts";
+import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type JobSpec, type LayoutEntry, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
-export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean; layoutJobs: JobSpec[]; layoutRuns: Map<number, PaneId>; cwd?: string };
+export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean; layout: LayoutSpec; layoutJobs: JobSpec[]; layoutRuns: Map<number, PaneId>; cwd?: string };
 
 export type PopupSize = { width: number; height: number };
 export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view" | "job"; askingPane?: PaneId; size?: PopupSize; hidden?: boolean };
@@ -25,7 +25,7 @@ const toastMs = 5000;
 const keptFinishedJobs = 5;
 
 export type Prompt = {
-  kind: "rename-tab" | "rename-pane" | "close-tab" | "open-project" | "run-job";
+  kind: "rename-tab" | "rename-pane" | "close-tab" | "restart-tab" | "open-project" | "run-job";
   title: string;
   detail?: string;
   text: string;
@@ -691,6 +691,9 @@ export class Workspace {
         this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates, marked: [], selected: 0 };
         return;
       }
+      case "restart-tab":
+        this.prompt = { kind: "restart-tab", title: "Restart tab", detail: `Type "${this.tab.name}" to rebuild it from its layout`, text: "", selected: 0 };
+        return;
       case "close-tab":
         this.prompt = { kind: "close-tab", title: "Close tab", detail: `Type "${this.tab.name}" to close it`, text: "", selected: 0 };
         return;
@@ -815,15 +818,30 @@ export class Workspace {
 
   private openTab(cwd: string | undefined, options: { name?: string; layout?: LayoutEntry; withJobs?: boolean } = {}): void {
     const number = this.nextTabNumber++;
-    const plan = planLayout(options.layout?.layout ?? {}, () => this.nextPaneId++);
-    const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: plan.root, focused: plan.focus, zoomed: false, layoutJobs: options.layout?.jobs ?? [], layoutRuns: new Map(), cwd };
+    const layout = options.layout?.layout ?? {};
+    const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: leaf(0), focused: 0, zoomed: false, layout, layoutJobs: options.layout?.jobs ?? [], layoutRuns: new Map(), cwd };
     this.tabs.splice(this.tabs.length === 0 ? 0 : this.active + 1, 0, tab);
     this.active = this.tabs.length === 1 ? 0 : this.active + 1;
+    this.createLayoutPanes(tab);
+    if (options.withJobs ?? true) tab.layoutJobs.forEach((_, index) => this.runLayoutJob(tab, index));
+  }
+
+  private createLayoutPanes(tab: Tab): void {
+    const plan = planLayout(tab.layout, () => this.nextPaneId++);
+    Object.assign(tab, { root: plan.root, focused: plan.focus, zoomed: false });
     for (const pane of plan.panes) {
       if (pane.name) this.paneNames.set(pane.id, pane.name);
-      this.host.create(pane.id, cwd, pane.command, tab.id);
+      this.host.create(pane.id, tab.cwd, pane.command, tab.id);
     }
-    if (options.withJobs ?? true) tab.layoutJobs.forEach((_, index) => this.runLayoutJob(tab, index));
+  }
+
+  private restartTab(): void {
+    const tab = this.tab;
+    for (const job of this.tabJobs(tab)) this.closeJob(job.id);
+    this.destroyTabPanes(tab);
+    tab.layoutRuns = new Map();
+    this.createLayoutPanes(tab);
+    tab.layoutJobs.forEach((_, index) => this.runLayoutJob(tab, index));
   }
 
   private runLayoutJob(tab: Tab, index: number): void {
@@ -874,14 +892,19 @@ export class Workspace {
 
   private closeTab(): void {
     const index = this.active;
-    for (const id of paneIds(this.tab.root)) {
+    this.destroyTabPanes(this.tab);
+    this.removeTab(index);
+  }
+
+  private destroyTabPanes(tab: Tab): void {
+    for (const id of paneIds(tab.root)) {
       this.host.destroy(id);
       this.paneNames.delete(id);
       this.agents.delete(id);
       this.replies.delete(id);
       this.commands.delete(id);
+      this.activities.delete(id);
     }
-    this.removeTab(index);
   }
 
   private editPrompt(key: InputKey): void {
@@ -932,6 +955,10 @@ export class Workspace {
       case "close-tab":
         if (prompt.text === this.tab.name) return this.closeTab();
         this.message = "Kept the tab";
+        return;
+      case "restart-tab":
+        if (prompt.text === this.tab.name) return this.restartTab();
+        this.message = "Left the tab running";
         return;
       case "open-project": {
         if (prompt.marked && prompt.marked.length > 0) return this.openProjects(prompt.marked, withJobs);

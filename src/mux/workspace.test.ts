@@ -1101,6 +1101,30 @@ describe("Workspace", () => {
       expect(empty.message).toBe("No agent reply to show");
     });
 
+    test("Ctrl+t R rebuilds the tab from its layout after you type its name", () => {
+      const host = new FakeHost();
+      const config = configSchema.parse({
+        projects: { layout: "up" },
+        layouts: { up: { row: [{ focus: true }, { command: ["remax"] }], jobs: [{ command: ["scripts/up"] }] } },
+      });
+      const workspace = new Workspace(host, "/home", config, () => 0);
+      workspace.openProject("merlin");
+      const tab = workspace.tab;
+      const before = paneIds(tab.root);
+      const layoutJob = tab.layoutRuns.get(0)!;
+      const adHoc = workspace.runJob(tab.focused, ["make"])!;
+      press(workspace, "ctrl+p", "r");
+      press(workspace, "ctrl+t", "shift+r", "x", "return");
+      expect(workspace.message).toBe("Left the tab running");
+      press(workspace, "ctrl+t", "shift+r", ..."merlin".split(""), "return");
+      expect(workspace.tab).toBe(tab);
+      expect(host.destroyed).toEqual(expect.arrayContaining([...before, layoutJob, adHoc]));
+      expect(paneIds(tab.root)).toHaveLength(2);
+      expect(paneIds(tab.root).some((id) => before.includes(id))).toBe(false);
+      expect(paneIds(tab.root).map((id) => host.commands.get(id))).toEqual([undefined, ["remax"]]);
+      expect(workspace.tabJobs(tab).map((job) => job.command)).toEqual([["scripts/up"]]);
+    });
+
     test("closing the last tab with several jobs closes them all", () => {
       const { host, workspace } = ide({ now: 0 });
       const first = workspace.tab.name;

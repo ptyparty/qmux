@@ -423,20 +423,33 @@ export class Workspace {
     const asking = new Set(asks.map((popup) => popup.askingPane ?? this.tabs.find((tab) => tab.id === popup.tabId)?.focused));
     const needs = (id: PaneId) => asking.has(id) || this.agents.get(id) === "waiting";
     const finished = (id: PaneId) => this.agents.get(id) === "done" || this.agents.get(id) === "failed" || this.commandFinished(id);
-    const target = rotated.find((entry) => needs(entry.id));
+    const ask = rotated.find((entry) => asking.has(entry.id));
+    if (ask) {
+      this.active = ask.index;
+      for (const hidden of this.hiddenAsks()) hidden.hidden = false;
+      this.lastKeyAt = Number.NEGATIVE_INFINITY;
+      return;
+    }
+    const waiting = rotated.find((entry) => needs(entry.id));
+    if (waiting) return this.goToAgent(waiting);
     const failedJob = this.jobs.find((job) => job.state === "failed" && !job.seen);
-    if (!target && failedJob) return this.openJob(failedJob.id);
-    const done = target ?? rotated.find((entry) => finished(entry.id));
+    if (failedJob) return this.openJob(failedJob.id);
+    const replied = rotated.find((entry) => this.replies.get(entry.id)?.unread);
+    if (replied) return this.peekAt(replied.id);
+    const done = rotated.find((entry) => finished(entry.id));
     if (!done) {
       this.message = "No agent needs you";
       return;
     }
-    this.active = done.index;
-    if (asking.has(done.id)) for (const ask of this.hiddenAsks()) ask.hidden = false;
-    if (!this.jobStatus(done.id)) this.tab.focused = done.id;
-    else if (!asking.has(done.id)) {
-      this.openJob(done.id);
-      if (this.jobStatus(done.id)?.agent) this.hideOnReply.add(done.id);
+    this.goToAgent(done);
+  }
+
+  private goToAgent(entry: { index: number; id: PaneId }): void {
+    this.active = entry.index;
+    if (!this.jobStatus(entry.id)) this.tab.focused = entry.id;
+    else {
+      this.openJob(entry.id);
+      if (this.jobStatus(entry.id)?.agent) this.hideOnReply.add(entry.id);
     }
     this.lastKeyAt = Number.NEGATIVE_INFINITY;
   }
@@ -463,8 +476,13 @@ export class Workspace {
       this.message = "No agent reply to show";
       return;
     }
-    const [id, reply] = target;
-    const tab = this.tabOf(id)!;
+    this.peekAt(target[0]);
+  }
+
+  private peekAt(id: PaneId): void {
+    const reply = this.replies.get(id);
+    const tab = this.tabOf(id);
+    if (!reply || !tab) return;
     this.active = this.tabs.indexOf(tab);
     for (const popup of this.popups.filter((candidate) => candidate.tabId === tab.id && candidate.kind === "job")) this.popupExited(popup.id);
     this.peeking = true;

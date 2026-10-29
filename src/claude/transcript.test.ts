@@ -166,16 +166,24 @@ describe("Transcript", () => {
   test("a prompt queued during a turn keeps Claude working until it is taken up and answered", () => {
     const transcript = feed(new Transcript(), init);
     transcript.addPrompt("first", "u1");
-    feed(transcript, { type: "user", isReplay: true, uuid: "u1", message: { content: "first" } });
+    feed(transcript, event({ type: "message_start" }), { type: "stream_event", user_message_uuid: "u1", event: { type: "message_start" } });
     transcript.addPrompt("second", "u2");
-    feed(transcript, { type: "result", subtype: "success" });
+    feed(transcript, { type: "result", subtype: "success", user_message_uuid: "u1" });
     expect(transcript.state).toBe("working");
-    feed(transcript, { type: "user", isReplay: true, uuid: "u2", message: { content: "second" } }, { type: "result", subtype: "success" });
+    feed(transcript, { type: "assistant", user_message_uuid: "u2", message: { content: [] } }, { type: "result", subtype: "success" });
     expect(transcript.state).toBe("idle");
     expect(transcript.entries).toEqual([
       { kind: "user", text: "first" },
       { kind: "user", text: "second" },
     ]);
+  });
+
+  test("prompts merged into one turn are all taken up by it", () => {
+    const transcript = feed(new Transcript(), init);
+    transcript.addPrompt("first", "u1");
+    transcript.addPrompt("second", "u2");
+    feed(transcript, { type: "result", subtype: "success", user_message_uuid: "u2", user_message_uuids: ["u1", "u2"] });
+    expect(transcript.state).toBe("idle");
   });
 
   test("an interrupt drops prompts still queued", () => {

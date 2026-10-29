@@ -297,8 +297,15 @@ async function claudeCommand(args: string[]): Promise<void> {
   if (values.mode !== undefined && !mode) throw new UsageError(`--mode must be one of ${permissionModes.join(", ")}`);
   const picksItself = ["--resume", "-r", "--continue", "-c", "--session-id", "--fork-session", "--from-pr"];
   const pick = !values.resume && !values.continue && !positionals.some((arg) => picksItself.includes(arg.split("=")[0]!));
+  const claudeArgs = [...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...(mode ? ["--permission-mode", mode] : []), ...positionals];
+  const { claudeOptions } = await import("./claude/options.ts");
+  try {
+    claudeOptions(claudeArgs);
+  } catch (error) {
+    throw new UsageError((error as Error).message);
+  }
   return runClaude(
-    [...(values.resume ? ["--resume", values.resume] : []), ...(values.continue ? ["--continue"] : []), ...(mode ? ["--permission-mode", mode] : []), ...positionals],
+    claudeArgs,
     { pick },
   );
 }

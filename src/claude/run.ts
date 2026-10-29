@@ -8,6 +8,9 @@ import { declineHooks, defaultHookCommand, hooksDeclined, installHooks, missingH
 import { pick } from "./picker.ts";
 import { pastSessions, pickerItems, projectDir, readHistory, runningSessions, sessionIds, type Choice, type LiveSession } from "./sessions.ts";
 import { ClaudeSession } from "./session.ts";
+import { claudeOptions } from "./options.ts";
+import { reportState } from "../hooks/hook.ts";
+import { askOwner } from "../ask/ask.ts";
 import type { Entry } from "./transcript.ts";
 import { ClaudeView, composeKeyBindings } from "./view.ts";
 import { parseCommands, type SlashCommand } from "./commands.ts";
@@ -73,6 +76,10 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
       args,
       env: process.env,
       decide: (request, signal) => decidePermission(request, process.env, signal),
+      onInterrupted: () => {
+        const owner = askOwner(process.env);
+        if (owner) void reportState(owner, "done").catch(() => {});
+      },
       onChange: () => {
         view?.render();
         if (session) {
@@ -81,7 +88,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
         }
       },
     });
-    session.transcript.mode ??= requestedMode(args);
+    session.transcript.mode ??= claudeOptions(args).permissionMode;
     reportMode(session.transcript.mode);
     session.transcript.replay(history);
     view = new ClaudeView(renderer, session, () => quit());
@@ -190,12 +197,6 @@ function modeReporter(): (mode: string | undefined) => void {
     sent = mode;
     void ownPaneControl((paneId) => ({ method: "agent.mode", params: { paneId, mode } }));
   };
-}
-
-export function requestedMode(args: string[]): string | undefined {
-  const index = args.indexOf("--permission-mode");
-  if (index >= 0) return args[index + 1];
-  return args.find((arg) => arg.startsWith("--permission-mode="))?.slice("--permission-mode=".length);
 }
 
 function showIfJob(): Promise<void> {

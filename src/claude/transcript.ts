@@ -20,6 +20,8 @@ export type StreamMessage = {
   permissionMode?: string;
   parent_tool_use_id?: string | null;
   uuid?: string;
+  user_message_uuid?: string;
+  user_message_uuids?: string[];
   isReplay?: boolean;
   isSynthetic?: boolean;
   message?: { content?: string | Block[] };
@@ -105,6 +107,7 @@ export class Transcript {
 
   apply(message: StreamMessage): void {
     if (message.parent_tool_use_id) return;
+    for (const uuid of [message.user_message_uuid, ...(message.user_message_uuids ?? [])]) if (uuid) this.pending.delete(uuid);
     switch (message.type) {
       case "system":
         if (message.subtype === "init") {
@@ -120,11 +123,7 @@ export class Transcript {
         for (const block of blocks(message)) this.applyAssistantBlock(block);
         return;
       case "user":
-        if (message.isReplay) {
-          if (message.uuid) this.pending.delete(message.uuid);
-          return;
-        }
-        if (message.isSynthetic) return;
+        if (message.isReplay || message.isSynthetic) return;
         for (const block of blocks(message)) this.applyUserBlock(block);
         return;
       case "result":

@@ -1,20 +1,9 @@
+import { query, type PermissionResult as SdkPermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { claudeExited } from "../hooks/hook.ts";
 import type { PermissionRequest, PermissionResult } from "./permissions.ts";
 import { modeArgument, nextMode, parseCommands, parseMode, permissionModes, type PermissionMode, type SlashCommand } from "./commands.ts";
+import { claudeOptions } from "./options.ts";
 import { Transcript, type StreamMessage } from "./transcript.ts";
-
-export const claudeFlags = [
-  "-p",
-  "--input-format",
-  "stream-json",
-  "--output-format",
-  "stream-json",
-  "--verbose",
-  "--include-partial-messages",
-  "--replay-user-messages",
-  "--permission-prompt-tool",
-  "stdio",
-];
 
 export type SessionOptions = {
   cwd: string;
@@ -22,55 +11,69 @@ export type SessionOptions = {
   env: Record<string, string | undefined>;
   decide: (request: PermissionRequest, signal: AbortSignal) => Promise<PermissionResult>;
   onChange: () => void;
+  onInterrupted: () => void;
 };
-
-type ControlResponse = { type: "control_response"; response: { subtype: string; request_id: string; error?: string; response?: { commands?: unknown } } };
-
-const initializeId = "qmux-initialize";
-
-type ControlCancelRequest = { type: "control_cancel_request"; request_id: string };
-
-type ControlRequest = { type: "control_request"; request_id: string; request: { subtype: string; tool_name?: string; input?: Record<string, unknown>; permission_suggestions?: PermissionRequest["permission_suggestions"] } };
 
 export class ClaudeSession {
   readonly transcript = new Transcript();
   commands: SlashCommand[] = [];
   readonly exited: Promise<number>;
-  private readonly proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
-  private nextRequest = 1;
-  private readonly asking = new Map<string, AbortController>();
-  private readonly modeChanges = new Map<string, { previous: string | undefined; requested: PermissionMode }>();
+  private readonly query: Query;
+  private readonly prompts = new MessageQueue<SDKUserMessage>();
+  private readonly asking = new Set<AbortController>();
+  private stderr: string[] = [];
+  private stopping = false;
+  private interrupted = false;
 
   constructor(private readonly options: SessionOptions) {
-    this.proc = Bun.spawn(["claude", ...claudeFlags, ...options.args], {
-      cwd: options.cwd,
-      env: { ...options.env, QMUX_NATIVE_CLAUDE: "1" },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
+    this.query = query({
+      prompt: this.prompts,
+      options: {
+        ...claudeOptions(options.args),
+        cwd: options.cwd,
+        env: { ...options.env, QMUX_NATIVE_CLAUDE: "1" },
+        includePartialMessages: true,
+        systemPrompt: { type: "preset", preset: "claude_code" },
+        canUseTool: (tool, input, { signal, suggestions, toolUseID }) => this.answer(tool, input, suggestions, toolUseID, signal),
+        stderr: (data) => (this.stderr = [...this.stderr, ...data.split("\n").filter((line) => line.trim())].slice(-3)),
+      },
     });
-    const stderr = new Response(this.proc.stderr).text();
-    void this.read();
-    this.write({ type: "control_request", request_id: initializeId, request: { subtype: "initialize" } });
-    this.exited = this.proc.exited.then(async (code) => {
-      this.withdrawAsks();
-      const detail = (await stderr).trim().split("\n").slice(-3).join("\n");
-      this.transcript.ended(`Claude exited${code ? ` with code ${code}` : ""}${detail ? `: ${detail}` : ""}`);
-      options.onChange();
-      return code;
-    });
+    this.query.supportedCommands().then(
+      (commands) => {
+        this.commands = parseCommands(commands);
+        options.onChange();
+      },
+      () => {},
+    );
+    this.exited = this.read().then(
+      () => this.finish(0),
+      (error: Error) => this.finish(1, error.message),
+    );
   }
 
   send(text: string): void {
     const argument = modeArgument(text);
     if (argument !== undefined) return this.changeMode(argument);
     const uuid = crypto.randomUUID();
-    if (this.transcript.addPrompt(text, uuid)) this.write({ type: "user", uuid, message: { role: "user", content: text } });
+    if (this.transcript.addPrompt(text, uuid)) this.prompts.push({ type: "user", uuid, session_id: "", parent_tool_use_id: null, message: { role: "user", content: text } });
     this.options.onChange();
   }
 
   cycleMode(): void {
     this.setMode(nextMode(this.transcript.mode));
+  }
+
+  interrupt(): void {
+    this.interrupted = true;
+    this.transcript.interrupt();
+    this.query.interrupt().catch(() => {});
+  }
+
+  stop(): void {
+    this.stopping = true;
+    this.withdrawAsks();
+    this.prompts.close();
+    this.query.close();
   }
 
   private changeMode(argument: string): void {
@@ -85,107 +88,89 @@ export class ClaudeSession {
 
   private setMode(mode: PermissionMode): boolean {
     if (this.transcript.state === "ended") return false;
-    const id = `qmux-${this.nextRequest++}`;
-    this.modeChanges.set(id, { previous: this.transcript.mode, requested: mode });
+    const previous = this.transcript.mode;
     this.transcript.mode = mode;
-    this.write({ type: "control_request", request_id: id, request: { subtype: "set_permission_mode", mode } });
+    this.query.setPermissionMode(mode).catch((error: Error) => {
+      if (this.transcript.mode === mode) this.transcript.mode = previous;
+      this.transcript.notice(`Couldn't change the permission mode: ${error.message}`, "error");
+      this.options.onChange();
+    });
     this.options.onChange();
     return true;
   }
 
-  interrupt(): void {
-    this.transcript.interrupt();
-    this.write({ type: "control_request", request_id: `qmux-${this.nextRequest++}`, request: { subtype: "interrupt" } });
-  }
-
-  stop(): void {
-    this.withdrawAsks();
-    try {
-      this.proc.stdin.end();
-    } catch {}
-    this.proc.kill();
-  }
-
   private withdrawAsks(): void {
-    for (const ask of this.asking.values()) ask.abort(claudeExited);
-  }
-
-  private write(message: unknown): void {
-    if (this.transcript.state === "ended") return;
-    try {
-      this.proc.stdin.write(`${JSON.stringify(message)}\n`);
-      this.proc.stdin.flush();
-    } catch {}
+    for (const ask of this.asking) ask.abort(claudeExited);
   }
 
   private async read(): Promise<void> {
-    const decoder = new TextDecoder();
-    let buffer = "";
-    for await (const chunk of this.proc.stdout) {
-      buffer += decoder.decode(chunk, { stream: true });
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (line) this.handle(line);
+    for await (const message of this.query) {
+      this.transcript.apply(message as unknown as StreamMessage);
+      if (message.type === "result" && this.interrupted) {
+        this.interrupted = false;
+        this.options.onInterrupted();
       }
       this.options.onChange();
     }
   }
 
-  private handle(line: string): void {
-    let message: StreamMessage | ControlRequest | ControlCancelRequest | ControlResponse;
-    try {
-      message = JSON.parse(line);
-    } catch {
-      return;
-    }
-    if (message.type === "control_request") return void this.answer(message as ControlRequest);
-    if (message.type === "control_cancel_request") return void this.asking.get((message as ControlCancelRequest).request_id)?.abort();
-    if (message.type === "control_response") {
-      const { response } = message as ControlResponse;
-      const change = this.modeChanges.get(response.request_id);
-      if (change) {
-        this.modeChanges.delete(response.request_id);
-        if (response.subtype === "error") {
-          if (this.transcript.mode === change.requested) this.transcript.mode = change.previous;
-          this.transcript.notice(`Couldn't change the permission mode: ${response.error ?? "Claude refused"}`, "error");
-        }
-        return;
-      }
-      if (response.request_id === initializeId && response.subtype === "success") this.commands = parseCommands(response.response?.commands);
-      return;
-    }
-    this.transcript.apply(message as StreamMessage);
+  private finish(code: number, error?: string): number {
+    this.withdrawAsks();
+    this.prompts.close();
+    if (this.stopping) return code;
+    const detail = [error, ...this.stderr].filter(Boolean).join("\n");
+    this.transcript.ended(`Claude exited${detail ? `: ${detail}` : ""}`);
+    this.options.onChange();
+    return code;
   }
 
-  private async answer(message: ControlRequest): Promise<void> {
-    const { request } = message;
-    if (request.subtype !== "can_use_tool" || !request.tool_name) {
-      this.write({ type: "control_response", response: { subtype: "error", request_id: message.request_id, error: `qmux does not handle ${request.subtype}` } });
-      return;
-    }
-    const tool = request.tool_name;
-    const id = message.request_id;
-    const cancel = new AbortController();
-    this.asking.set(id, cancel);
+  private async answer(tool: string, input: Record<string, unknown>, suggestions: unknown[] | undefined, id: string, withdrawn: AbortSignal): Promise<SdkPermissionResult> {
+    const ask = new AbortController();
+    const signal = AbortSignal.any([withdrawn, ask.signal]);
+    this.asking.add(ask);
     this.transcript.permissionAsked(id, tool);
     this.options.onChange();
     const result: PermissionResult = await this.options
-      .decide({ tool_name: tool, input: request.input ?? {}, permission_suggestions: request.permission_suggestions }, cancel.signal)
+      .decide({ tool_name: tool, input, permission_suggestions: suggestions as PermissionRequest["permission_suggestions"] }, signal)
       .catch((error: Error) => ({ behavior: "deny", message: `qmux couldn't ask the user: ${error.message}` }));
-    this.asking.delete(id);
-    if (cancel.signal.aborted) {
+    this.asking.delete(ask);
+    if (signal.aborted) {
       this.transcript.permissionAnswered(id, "cancelled");
       this.options.onChange();
-      return;
+      return { behavior: "deny", message: "Withdrawn" };
     }
     if (result.behavior === "allow") this.transcript.mode = grantedMode(result.updatedPermissions) ?? this.transcript.mode;
     const dismissed = result.behavior === "deny" && result.interrupt === true;
     if (dismissed) this.transcript.interrupt();
     this.transcript.permissionAnswered(id, result.behavior === "allow" ? "allowed" : dismissed ? "dismissed" : "denied");
-    this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: result } });
     this.options.onChange();
+    return result as SdkPermissionResult;
+  }
+}
+
+class MessageQueue<T> implements AsyncIterable<T> {
+  private readonly queued: T[] = [];
+  private wake: (() => void) | undefined;
+  private closed = false;
+
+  push(item: T): void {
+    if (this.closed) return;
+    this.queued.push(item);
+    this.wake?.();
+  }
+
+  close(): void {
+    this.closed = true;
+    this.wake?.();
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<T> {
+    for (;;) {
+      while (this.queued.length > 0) yield this.queued.shift()!;
+      if (this.closed) return;
+      await new Promise<void>((resolve) => (this.wake = resolve));
+      this.wake = undefined;
+    }
   }
 }
 

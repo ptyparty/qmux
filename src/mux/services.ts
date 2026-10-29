@@ -9,6 +9,9 @@ type Running = { name: string; child: Bun.Subprocess; stopping: boolean };
 
 const stopGraceMs = 3000;
 
+// macOS has no parent-death signal, so services there can outlive a crashed server.
+const parentDeathSignal = process.platform === "linux" ? ["setpriv", "--pdeathsig", "TERM", "--"] : [];
+
 export class TabServices {
   private readonly running = new Map<number, Running[]>();
 
@@ -30,7 +33,7 @@ export class TabServices {
       const name = service.name ?? basename(service.command[0]!);
       const log = openSync(join(dir, `${name}.log`), "a", 0o600);
       try {
-        const child = Bun.spawn(["setsid", "setpriv", "--pdeathsig", "TERM", "--", ...service.command], {
+        const child = Bun.spawn(["setsid", ...parentDeathSignal, ...service.command], {
           cwd: cwd ?? process.cwd(),
           env: { ...this.env(), QMUX_TAB_DIR: dir },
           stdin: "ignore",

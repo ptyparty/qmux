@@ -5,11 +5,11 @@ export const localCommands: SlashCommand[] = [
   { name: "quit", description: "Same as /exit" },
 ];
 
-export function matchCommands(commands: SlashCommand[], input: string, limit = 8): SlashCommand[] {
+export function matchCommands(commands: SlashCommand[], input: string, limit = 8, withLocal = true): SlashCommand[] {
   if (!input.startsWith("/") || /\s/.test(input)) return [];
   const typed = input.slice(1).toLowerCase();
   const local = new Set(localCommands.map((command) => command.name));
-  const all = [...localCommands, ...commands.filter((command) => !local.has(command.name))];
+  const all = [...(withLocal ? localCommands : []), ...commands.filter((command) => !local.has(command.name))];
   const named = (command: SlashCommand) => command.name.toLowerCase();
   const exact = all.filter((command) => named(command) === typed);
   const starts = all.filter((command) => named(command) !== typed && named(command).startsWith(typed));

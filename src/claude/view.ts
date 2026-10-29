@@ -2,7 +2,8 @@ import { BoxRenderable, MarkdownRenderable, ScrollBoxRenderable, TextareaRendera
 import { markdownStyle } from "../form/view.ts";
 import { theme } from "../mux/theme.ts";
 import { styled } from "../ui/styled.ts";
-import { isQuit, matchCommands, type SlashCommand } from "./commands.ts";
+import { isQuit } from "./commands.ts";
+import { SlashCompletion } from "./completion.ts";
 import type { ClaudeSession } from "./session.ts";
 import type { Entry, SessionState } from "./transcript.ts";
 
@@ -25,10 +26,7 @@ export class ClaudeView {
   private readonly status: TextRenderable;
   private readonly scroll: ScrollBoxRenderable;
   private readonly input: TextareaRenderable;
-  private readonly completions: TextRenderable;
-  private matches: SlashCommand[] = [];
-  private selected = 0;
-  private hiddenFor: string | undefined;
+  private readonly completion: SlashCompletion;
   private readonly slots = new Map<Entry, Slot>();
   private shown = 0;
   private readonly style: SyntaxStyle;
@@ -54,13 +52,17 @@ export class ClaudeView {
       focusedTextColor: theme.text,
       keyBindings: composeKeyBindings,
       onSubmit: () => this.submit(),
-      onContentChange: () => this.updateCompletions(),
+      onContentChange: () => this.completion.update(),
     });
     inputBox.add(this.input);
-    this.completions = new TextRenderable(renderer, { flexShrink: 0, wrapMode: "none", visible: false, bg: theme.surface, paddingLeft: 1 });
+    this.completion = new SlashCompletion(renderer, this.input, {
+      commands: () => this.session.commands,
+      submit: () => this.submit(),
+      keepsEscape: () => this.session.transcript.state !== "working" && this.session.transcript.state !== "waiting",
+    });
     root.add(this.status);
     root.add(this.scroll);
-    root.add(this.completions);
+    root.add(this.completion.list);
     root.add(inputBox);
     renderer.root.add(root);
     this.input.focus();
@@ -78,7 +80,7 @@ export class ClaudeView {
       this.scroll.add(slot.root);
     }
     this.shown = transcript.entries.length;
-    if (this.input.plainText.startsWith("/")) this.updateCompletions();
+    if (this.input.plainText.startsWith("/")) this.completion.update();
     for (const entry of transcript.takeChanges()) this.slots.get(entry)?.update(entry);
     this.renderer.requestRender();
   }
@@ -95,54 +97,8 @@ export class ClaudeView {
     this.session.send(text);
   }
 
-  private updateCompletions(): void {
-    const text = this.input.plainText;
-    if (this.hiddenFor !== undefined && this.hiddenFor !== text) this.hiddenFor = undefined;
-    const matches = this.hiddenFor === undefined ? matchCommands(this.session.commands, text) : [];
-    if (matches.map((command) => command.name).join() !== this.matches.map((command) => command.name).join()) this.selected = 0;
-    this.matches = matches;
-    this.completions.visible = matches.length > 0;
-    if (matches.length > 0) {
-      this.completions.height = matches.length;
-      const width = Math.max(this.renderer.width - 4, 20);
-      this.completions.content = styled(
-        matches.flatMap((command, index) => {
-          const chosen = index === this.selected;
-          const hint = command.argumentHint && command.argumentHint.length > 30 ? `${command.argumentHint.slice(0, 29)}…` : command.argumentHint;
-          const name = `/${command.name}${hint ? ` ${hint}` : ""}`;
-          const description = fitWidth(command.description, Math.max(width - Bun.stringWidth(name) - 4, 0));
-          return [...(index > 0 ? ["\n"] : []), bold(fg(chosen ? theme.accent : theme.text)(`${chosen ? "›" : " "} ${name}`)), fg(theme.muted)(`  ${description}`)];
-        }),
-      );
-    }
-    this.renderer.requestRender();
-  }
-
-  private complete(command: SlashCommand, run: boolean): void {
-    this.input.setText(`/${command.name}${run ? "" : " "}`);
-    this.input.gotoBufferEnd();
-    if (run) this.submit();
-  }
-
-  private completionKey(key: KeyEvent): boolean {
-    if (this.matches.length === 0) return false;
-    const command = this.matches[this.selected]!;
-    if (key.name === "up" || key.name === "down") {
-      this.selected = (this.selected + (key.name === "up" ? -1 : 1) + this.matches.length) % this.matches.length;
-      this.updateCompletions();
-    } else if (key.name === "tab") this.complete(command, false);
-    else if (key.name === "return" && !key.meta) this.complete(command, true);
-    else if (key.name === "escape") {
-      this.hiddenFor = this.input.plainText;
-      this.updateCompletions();
-      const state = this.session.transcript.state;
-      return state !== "working" && state !== "waiting";
-    } else return false;
-    return true;
-  }
-
   private readonly onKey = (key: KeyEvent) => {
-    if (this.completionKey(key)) {
+    if (this.completion.handleKey(key)) {
       key.preventDefault();
       return;
     }
@@ -193,14 +149,4 @@ function entryText(entry: Entry) {
     case "text":
       return styled([entry.text]);
   }
-}
-
-function fitWidth(text: string, width: number): string {
-  if (Bun.stringWidth(text) <= width) return text;
-  let cut = "";
-  for (const char of text) {
-    if (Bun.stringWidth(cut + char) > width - 1) break;
-    cut += char;
-  }
-  return width > 0 ? `${cut}…` : "";
 }

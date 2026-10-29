@@ -10,11 +10,14 @@ import { pastSessions, pickerItems, projectDir, runningSessions, sessionIds, typ
 import { ClaudeSession } from "./session.ts";
 import type { Entry } from "./transcript.ts";
 import { ClaudeView, composeKeyBindings } from "./view.ts";
+import { parseCommands, type SlashCommand } from "./commands.ts";
+import { SlashCompletion } from "./completion.ts";
 
 export async function runClaude(args: string[], options: { pick: boolean }): Promise<void> {
   const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
   const queued: string[] = [];
   let deliverTo: ((text: string) => void) | undefined;
+  let session: ClaudeSession | undefined;
   let inbox: Inbox | undefined;
   let choice: Choice | undefined = { kind: "new" };
   const leave = () => {
@@ -27,7 +30,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   for (const signal of signals) process.on(signal, leave);
   try {
     if (options.pick && runningAsJob()) {
-      inbox = await openInbox((text) => (deliverTo ? deliverTo(text) : queued.push(text)), { dormant: true });
+      inbox = await openInbox((text) => (deliverTo ? deliverTo(text) : queued.push(text)), { dormant: true, commands: () => session?.commands ?? [] });
     }
     if (inbox) choice = await wakeAndChoose(renderer, inbox);
     else {
@@ -52,7 +55,6 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   if (choice.kind === "resume") args = ["--resume", choice.sessionId, ...args];
   if (inbox) await hideOwnJob();
   let view: ClaudeView | undefined;
-  let session: ClaudeSession | undefined;
   let failure: string | undefined;
   let quit: () => void = () => {};
   const quitting = new Promise<void>((resolve) => (quit = resolve));
@@ -77,7 +79,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
     if (inbox) {
       await inbox.awaken();
       await requestCompose();
-    } else inbox = await openInbox(deliverTo);
+    } else inbox = await openInbox(deliverTo, { commands: () => target.commands });
     const code = await Promise.race([quitting.then(() => 0), session.exited]);
     const last = session.transcript.entries.at(-1);
     if (code !== 0 && last?.kind === "notice") failure = last.text;
@@ -259,7 +261,7 @@ function requestCompose(): Promise<void> {
   return ownPaneControl((paneId) => ({ method: "claude.compose", params: { paneId } }));
 }
 
-async function openInbox(onText: (text: string) => void, options: { dormant?: boolean } = {}): Promise<Inbox | undefined> {
+async function openInbox(onText: (text: string) => void, options: { dormant?: boolean; commands?: () => SlashCommand[] } = {}): Promise<Inbox | undefined> {
   const { QMUX_SOCKET: control, QMUX_PANE_ID: pane, QMUX_TAB_DIR: dir } = process.env;
   const paneId = Number(pane);
   if (!control || !dir || !Number.isInteger(paneId)) return undefined;
@@ -275,8 +277,9 @@ async function openInbox(onText: (text: string) => void, options: { dormant?: bo
         buffers.set(socket, lines.pop()!);
         for (const line of lines) {
           try {
-            const { text, wake: woken } = JSON.parse(line) as { text?: unknown; wake?: unknown };
-            if (woken === true) wake?.();
+            const { text, wake: woken, commands } = JSON.parse(line) as { text?: unknown; wake?: unknown; commands?: unknown };
+            if (commands === true) socket.write(`${JSON.stringify({ commands: options.commands?.() ?? [] })}\n`);
+            else if (woken === true) wake?.();
             else if (typeof text === "string" && text.trim()) onText(text.trim());
           } catch {}
         }
@@ -317,23 +320,77 @@ async function openInbox(onText: (text: string) => void, options: { dormant?: bo
 
 export async function runCompose(socket: string, name: string): Promise<void> {
   const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
-  const text = await composeMessage(renderer, name);
+  const text = await composeMessage(renderer, name, () => fetchCommands(socket));
   renderer.destroy();
   await renderer.closed;
   if (text) await deliver(socket, text);
 }
 
-function composeMessage(renderer: CliRenderer, name: string): Promise<string | undefined> {
+function composeMessage(renderer: CliRenderer, name: string, load: () => Promise<SlashCommand[]>): Promise<string | undefined> {
   return new Promise((resolve) => {
+    let commands: SlashCommand[] = [];
+    let loading: Promise<void> | undefined;
+    const fetch = () => {
+      loading ??= load().then((found) => {
+        commands = found;
+        if (found.length === 0) loading = undefined;
+        completion.update();
+      });
+    };
     const box = new BoxRenderable(renderer, { width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.background, paddingLeft: 1, paddingRight: 1 });
-    box.add(new TextRenderable(renderer, { content: `To ${name} · Enter send · Alt+Enter newline · Esc cancel`, fg: theme.muted, height: 1, flexShrink: 0 }));
-    const input = new TextareaRenderable(renderer, { flexGrow: 1, wrapMode: "word", textColor: theme.text, focusedTextColor: theme.text, keyBindings: composeKeyBindings, onSubmit: () => resolve(input.plainText.trim() || undefined) });
+    box.add(new TextRenderable(renderer, { content: `To ${name} · / commands · Enter send · Alt+Enter newline · Esc cancel`, fg: theme.muted, height: 1, flexShrink: 0 }));
+    const send = () => resolve(input.plainText.trim() || undefined);
+    const input: TextareaRenderable = new TextareaRenderable(renderer, {
+      flexGrow: 1,
+      wrapMode: "word",
+      textColor: theme.text,
+      focusedTextColor: theme.text,
+      keyBindings: composeKeyBindings,
+      onSubmit: send,
+      onContentChange: () => {
+        if (commands.length === 0 && input.plainText.startsWith("/")) fetch();
+        completion.update();
+      },
+    });
+    const completion = new SlashCompletion(renderer, input, { commands: () => commands, submit: send, local: false });
+    box.add(completion.list);
     box.add(input);
     renderer.root.add(box);
     input.focus();
+    fetch();
     renderer.keyInput.on("keypress", (key: KeyEvent) => {
-      if (key.name === "escape") resolve(undefined);
+      if (completion.handleKey(key)) key.preventDefault();
+      else if (key.name === "escape") resolve(undefined);
     });
+  });
+}
+
+function fetchCommands(socket: string, timeoutMs = 1000): Promise<SlashCommand[]> {
+  return new Promise((resolve) => {
+    let buffer = "";
+    const timer = setTimeout(() => resolve([]), timeoutMs);
+    const done = (commands: SlashCommand[]) => {
+      clearTimeout(timer);
+      resolve(commands);
+    };
+    Bun.connect({
+      unix: socket,
+      socket: {
+        open: (connection) => void connection.write(`${JSON.stringify({ commands: true })}\n`),
+        data: (connection, data) => {
+          buffer += data.toString();
+          const newline = buffer.indexOf("\n");
+          if (newline < 0) return;
+          connection.end();
+          try {
+            done(parseCommands((JSON.parse(buffer.slice(0, newline)) as { commands?: unknown }).commands));
+          } catch {
+            done([]);
+          }
+        },
+        error: () => done([]),
+      },
+    }).catch(() => done([]));
   });
 }
 

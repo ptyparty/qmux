@@ -36,6 +36,7 @@ export const controlRequest = z.discriminatedUnion("method", [
   z.object({ method: z.literal("pane.focus"), params: z.object({ paneId: z.number().int(), closing: z.number().int().optional(), onlyJob: z.boolean().optional() }) }),
   z.object({ method: z.literal("claude.register"), params: z.object({ paneId: z.number().int(), socket: z.string().min(1).nullable(), dormant: z.boolean().optional() }) }),
   z.object({ method: z.literal("claude.compose"), params: z.object({ paneId: z.number().int() }) }),
+  z.object({ method: z.literal("agent.prompt"), params: z.object({ paneId: z.number().int(), text: z.string().min(1) }) }),
   z.object({ method: z.literal("job.hide"), params: z.object({ jobId: z.number().int() }) }),
   z.object({ method: z.literal("session.info") }),
   z.object({ method: z.literal("session.quit") }),

@@ -148,6 +148,10 @@ export class Pane {
     this.options.job = false;
   }
 
+  type(data: string): void {
+    this.pty.write(data);
+  }
+
   kill(): void {
     this.pty.child.kill();
   }

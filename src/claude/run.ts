@@ -12,6 +12,7 @@ import type { Entry } from "./transcript.ts";
 import { ClaudeView, composeKeyBindings } from "./view.ts";
 import { parseCommands, type SlashCommand } from "./commands.ts";
 import { SlashCompletion } from "./completion.ts";
+import { deliver } from "./inbox.ts";
 
 export async function runClaude(args: string[], options: { pick: boolean }): Promise<void> {
   const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
@@ -387,23 +388,5 @@ function fetchCommands(socket: string, timeoutMs = 1000): Promise<SlashCommand[]
         error: () => done([]),
       },
     }).catch(() => done([]));
-  });
-}
-
-function deliver(socket: string, text: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    Bun.connect({
-      unix: socket,
-      socket: {
-        open(connection) {
-          connection.end(`${JSON.stringify({ text })}\n`);
-          resolve();
-        },
-        data() {},
-        error(_connection, error) {
-          reject(error);
-        },
-      },
-    }).catch(reject);
   });
 }

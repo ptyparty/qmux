@@ -14,6 +14,8 @@ import { ReadScheduler } from "./pty.ts";
 import { TabDirs } from "./tab-dirs.ts";
 import { LineTail } from "./tail.ts";
 import { refuseAgentCommand } from "./agent-jobs.ts";
+import { deliver } from "../claude/inbox.ts";
+import { bracketedPaste, peekSpec, promptRoute } from "./peek.ts";
 import { Tray, trayWidgets } from "./tray.ts";
 import { MuxView } from "./view.ts";
 import { Workspace, type PaneHost, type PopupSize } from "./workspace.ts";
@@ -218,8 +220,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       const tabId = workspace.tabOf(near)?.id;
       if (tabId === undefined) return;
       const spec = join(tabDirs.tabDir(tabId), `peek-${near}.json`);
-      const next = { type: "choice", id: "next", label: "Then", other: false, default: "done", options: [{ value: "done", label: "Done" }, { value: "go", label: "Go to it", description: "show the agent's pane or job" }] };
-      void Bun.write(spec, JSON.stringify({ title, elements: [{ type: "markdown", text }, next], submitLabel: "OK" })).then(() => {
+      void Bun.write(spec, JSON.stringify(peekSpec(title, text))).then(() => {
         openViewPopup(near, [...selfCommand(), "peek", spec, "--pane", String(near)], title, { width: 80, height: 80 }, true);
         refresh();
       });
@@ -452,6 +453,24 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
         case "claude.compose": {
           const message = host.composeClaude(request.params.paneId, [request.params.paneId]);
           return message ? { ok: false, error: message } : { ok: true };
+        }
+        case "agent.prompt": {
+          const { paneId, text } = request.params;
+          const pane = panes.get(paneId);
+          if (!pane) return { ok: false, error: `no pane ${paneId}` };
+          const socket = nativeClaudes.get(paneId);
+          const route = promptRoute(socket !== undefined, workspace.agents.get(paneId));
+          if (route === "busy") {
+            workspace.message = `${workspace.paneNames.get(paneId) ?? workspace.jobStatus(paneId)?.name ?? "Claude"} is busy · open it to answer`;
+            refresh();
+            return { ok: false, error: "busy" };
+          }
+          if (route === "socket") void deliver(socket!, text).catch(() => undefined);
+          else {
+            pane.type(bracketedPaste(text));
+            setTimeout(() => pane.type("\r"), 100);
+          }
+          return { ok: true };
         }
         case "job.hide":
           workspace.popupExited(request.params.jobId);

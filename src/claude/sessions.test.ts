@@ -62,4 +62,12 @@ describe("Claude sessions", () => {
   test("ages read in the largest whole unit", () => {
     expect([age(30_000), age(5 * 60_000), age(3 * 3_600_000), age(50 * 3_600_000)]).toEqual(["just now", "5m ago", "3h ago", "2d ago"]);
   });
+
+  test("as a job, the picker offers not to start Claude, right after New", () => {
+    const items = pickerItems({ live: [], running: [], past: [], known: [], now: 0, asJob: true });
+    expect(items.map((item) => [item.label, item.choice])).toEqual([
+      ["New conversation", { kind: "new" }],
+      ["Don't start Claude", { kind: "skip" }],
+    ]);
+  });
 });

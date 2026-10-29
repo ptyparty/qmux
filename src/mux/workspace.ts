@@ -1,9 +1,9 @@
 import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
-import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type LayoutEntry } from "./config.ts";
+import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type JobSpec, type LayoutEntry } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
-export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean };
+export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean; layoutJobs: JobSpec[]; layoutRuns: Map<number, PaneId>; cwd?: string };
 
 export type PopupSize = { width: number; height: number };
 export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view" | "job"; askingPane?: PaneId; size?: PopupSize };
@@ -537,28 +537,28 @@ export class Workspace {
     this.selectFocusedTabs();
   }
 
-  openProject(target: string): string | undefined {
+  openProject(target: string, withJobs = true): string | undefined {
     const project = resolveTarget(target.trim(), this.host.cwd(this.tab.focused) ?? process.cwd(), this.projects());
     if (!project) return `No project matches ${JSON.stringify(target.trim())}`;
-    this.showProject(project);
+    this.showProject(project, withJobs);
     this.selectFocusedTabs();
     return undefined;
   }
 
-  private openProjects(projects: Project[]): void {
+  private openProjects(projects: Project[], withJobs: boolean): void {
     let first: number | undefined;
     for (const project of projects) {
-      this.showProject(project);
+      this.showProject(project, withJobs);
       first ??= this.active;
     }
     if (first !== undefined) this.active = first;
     this.selectFocusedTabs();
   }
 
-  private showProject(project: Project): void {
+  private showProject(project: Project, withJobs = true): void {
     const existing = this.tabs.findIndex((tab) => tab.name === project.name);
     if (existing >= 0) this.active = existing;
-    else this.openTab(project.dir, { name: project.name, layout: projectLayout(this.config, project) });
+    else this.openTab(project.dir, { name: project.name, layout: projectLayout(this.config, project), withJobs });
   }
 
   openPaneNear(near: PaneId, placement: PanePlacement, command: string[], options: { name?: string; focus?: boolean } = {}): PaneId | undefined {
@@ -714,6 +714,8 @@ export class Workspace {
         return this.withJob((job) => this.popupExited(job.id));
       case "rerun-job":
         return this.withJob((job) => this.rerunJob(job));
+      case "start-layout-jobs":
+        return this.startLayoutJobs();
       case "dock-job":
         return this.withJob((job) => {
           job.dock = !job.dock;
@@ -754,21 +756,44 @@ export class Workspace {
     return rect.width * cols > rect.height * rows * 2.2 ? "row" : "column";
   }
 
-  private openTab(cwd: string | undefined, options: { name?: string; layout?: LayoutEntry } = {}): void {
+  private openTab(cwd: string | undefined, options: { name?: string; layout?: LayoutEntry; withJobs?: boolean } = {}): void {
     const number = this.nextTabNumber++;
     const plan = planLayout(options.layout?.layout ?? {}, () => this.nextPaneId++);
-    const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: plan.root, focused: plan.focus, zoomed: false };
+    const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: plan.root, focused: plan.focus, zoomed: false, layoutJobs: options.layout?.jobs ?? [], layoutRuns: new Map(), cwd };
     this.tabs.splice(this.tabs.length === 0 ? 0 : this.active + 1, 0, tab);
     this.active = this.tabs.length === 1 ? 0 : this.active + 1;
     for (const pane of plan.panes) {
       if (pane.name) this.paneNames.set(pane.id, pane.name);
       this.host.create(pane.id, cwd, pane.command, tab.id);
     }
-    for (const job of options.layout?.jobs ?? []) {
-      const id = this.runJob(tab.focused, job.command, job.name, { cwd, dock: job.dock });
-      const started = id === undefined ? undefined : this.jobStatus(id);
-      if (started) started.layout = true;
+    if (options.withJobs ?? true) tab.layoutJobs.forEach((_, index) => this.runLayoutJob(tab, index));
+  }
+
+  private runLayoutJob(tab: Tab, index: number): void {
+    const spec = tab.layoutJobs[index]!;
+    const id = this.runJob(tab.focused, spec.command, spec.name, { cwd: tab.cwd, dock: spec.dock });
+    const started = id === undefined ? undefined : this.jobStatus(id);
+    if (!started) return;
+    started.layout = true;
+    tab.layoutRuns.set(index, started.id);
+  }
+
+  private startLayoutJobs(): void {
+    const tab = this.tab;
+    if (tab.layoutJobs.length === 0) {
+      this.message = "This tab's layout has no jobs";
+      return;
     }
+    let started = 0;
+    tab.layoutJobs.forEach((_, index) => {
+      const id = tab.layoutRuns.get(index);
+      const job = id === undefined ? undefined : this.jobStatus(id);
+      if (job?.state === "running" || (id !== undefined && !job && paneIds(tab.root).includes(id))) return;
+      started++;
+      if (job) this.rerunJob(job);
+      else this.runLayoutJob(tab, index);
+    });
+    if (started === 0) this.message = "All of this tab's layout jobs are running";
   }
 
   private moveTab(delta: number): void {
@@ -810,7 +835,7 @@ export class Workspace {
     }
     if (key.name === "return") {
       this.prompt = undefined;
-      return this.commitPrompt(prompt);
+      return this.commitPrompt(prompt, !key.meta);
     }
     const matches = prompt.matches ?? [];
     if (key.name === "up" || key.name === "down") {
@@ -834,7 +859,7 @@ export class Workspace {
     }
   }
 
-  private commitPrompt(prompt: Prompt): void {
+  private commitPrompt(prompt: Prompt, withJobs: boolean): void {
     const text = prompt.text.trim();
     switch (prompt.kind) {
       case "rename-tab":
@@ -852,9 +877,9 @@ export class Workspace {
         this.message = "Kept the tab";
         return;
       case "open-project": {
-        if (prompt.marked && prompt.marked.length > 0) return this.openProjects(prompt.marked);
+        if (prompt.marked && prompt.marked.length > 0) return this.openProjects(prompt.marked, withJobs);
         const target = looksLikePath(text) ? text : (prompt.matches?.[prompt.selected]?.name ?? text);
-        if (target) this.message = this.openProject(target);
+        if (target) this.message = this.openProject(target, withJobs);
         return;
       }
     }

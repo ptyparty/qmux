@@ -391,6 +391,36 @@ describe("Workspace", () => {
       expect(workspace.jobs).toEqual([]);
     });
 
+    test("Alt+Enter in the launcher opens a project without its jobs, and Ctrl+s s starts the missing ones", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home", config);
+      press(workspace, "ctrl+t", "o");
+      type(workspace, "merlin");
+      press(workspace, "alt+return");
+      expect(workspace.tab.name).toBe("merlin");
+      expect(workspace.tabJobs()).toEqual([]);
+      press(workspace, "ctrl+s", "s");
+      expect(workspace.tabJobs().map((job) => [job.name, job.dock, job.layout])).toEqual([
+        ["server", true, true],
+        ["make watch", false, true],
+      ]);
+      expect(host.jobCwds.get(workspace.tabJobs()[0]!.id)).toBe("/work/exfresso/merlin");
+      press(workspace, "ctrl+s", "s");
+      expect(workspace.message).toBe("All of this tab's layout jobs are running");
+      const [server, watch] = workspace.tabJobs();
+      workspace.closeJob(server!.id);
+      workspace.jobFinished(watch!.id, 1);
+      press(workspace, "ctrl+s", "s");
+      expect(workspace.tabJobs().map((job) => [job.name, job.state])).toEqual([
+        ["make watch", "running"],
+        ["server", "running"],
+      ]);
+      expect(host.reruns).toEqual([watch!.id]);
+      workspace.openProject("penguin");
+      press(workspace, "ctrl+s", "s");
+      expect(workspace.message).toBe("This tab's layout has no jobs");
+    });
+
     test("Ctrl+s d docks and undocks the selected job", () => {
       const workspace = new Workspace(new FakeHost(), "/home", config);
       workspace.openProject("merlin");

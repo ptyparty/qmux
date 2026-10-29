@@ -165,6 +165,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     const env: Record<string, string> = { ...inherited, ...paneEnv };
     if (renderer.capabilities?.kitty_graphics) env.QMUX_KITTY_GRAPHICS = "1";
     if (tabId !== undefined) env.QMUX_TAB_DIR = tabDirs.tabDir(tabId);
+    if (job) env.QMUX_JOB = String(id);
     panes.set(id, new Pane(renderer, id, { cwd, command, env, holdOnExit, holdOnFailure, frameless, job, scrollbackBytes }, scheduler, {
       onHeld: () => refresh(),
       onCommand: frameless || holdOnFailure ? undefined : commandEvent,

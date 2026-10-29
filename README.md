@@ -70,6 +70,7 @@ export default {
 - **Named tabs:** `tabs: { "q-space": { layout: "q-space", cwd: "~/work/flipstone/q-space" } }` defines a tab with its own layout and working directory. Named tabs appear first in the Ctrl+t o launcher and work with `qmux project`, so a closed one can be reopened, which also restarts its jobs.
 - **Startup:** `startup: ["q-space"]` opens those named tabs when a session starts, instead of a plain tab.
 - **Shared directory:** every pane and job in a tab gets `QMUX_TAB_DIR`, a private directory for that tab. A job can put its socket there for the tab's panes to find.
+- **Without jobs:** Alt+Enter in the Ctrl+t o launcher opens a project without starting its layout's jobs. Ctrl+s s starts them later.
 - **Earlier configs:** layouts used to take `services`; rename them to `jobs`.
 
 From inside a pane, `qmux pane open [--right|--below|--tab] [--name NAME] [--no-focus] -- COMMAND...` opens a pane beside it in the same tab and prints the new pane's id. With `--popup` (and optionally `--width`/`--height` in percent), the command opens over the tab at once and takes the keys. The popup closes when the command exits successfully. After a failure it stays up until the next key, so the error can be read.
@@ -82,6 +83,7 @@ A job is a command that runs out of sight in a tab, in a terminal of its own. Pr
 - **b** sends the focused pane to the background while it is busy with a long command. Its shell keeps running, and the job is done when that command finishes. This needs the fish integration that also drives the `⏳` badges.
 - **↑/↓** pick a job, **Enter** opens it over the tab, **h** hides it again, **r** re-runs it, **p** moves it into the layout as a pane, and **x** closes it, stopping it if it is still running.
 - **d** docks the job, or undocks it. Docked jobs sit in a strip at the bottom of the tab, one row each: the job's name, then its last line of output, or for an agent its state and the first line of its last reply. Docking doesn't depend on whether the job is shown. Click a row to open the job.
+- **s** starts the tab's layout jobs that aren't running, for example after opening a project without them or closing one.
 
 The mode row lists the tab's jobs that aren't docked, just left of the tray, each with its state, such as `⏳ make  💥 build`. Click one to open it. When the row is short of room, names get shorter, then the jobs collapse to counts like `⏳2 💥1`. While a job runs, its tab shows `⏳`. A job that succeeds shows a toast for five seconds. A job that fails keeps its toast and puts `💥` on its tab until you open it; Alt a or a click on the toast opens it. A finished job's popup takes Enter to re-run, p to move into the layout, x to close, and Esc to hide. While a job runs, keys go to it, so Ctrl+c stops it. **Alt j** hides the open job, running or not, and with no job open reopens the last one you opened. A job running an agent that Alt a opened for you hides by itself once you reply and the agent is back at work.
 
@@ -104,7 +106,7 @@ Closing a tab closes its jobs. A job's output is also written to `$QMUX_TAB_DIR/
 
 Permission requests, plans to review and Claude's questions open as the same qmux popups the hooks use, wherever you are in the tab, and the hooks keep the tab's `🧠` and `🚀` badges up to date. From any pane in the tab, **Alt+c** opens a box that sends a message to the tab's native Claude (the focused one, or else the first) without moving focus.
 
-Started without `--resume` or `--continue` in a directory with past conversations, `qmux claude` first lists them in the pane: conversations open in another qmux pane, ones running in other terminals, **New conversation**, and the last few past ones with their age and last prompt. Picking one open in a qmux pane moves focus there and closes this pane instead of opening the conversation twice. Esc quits.
+Started without `--resume` or `--continue` in a directory with past conversations, `qmux claude` first lists them in the pane: conversations open in another qmux pane, ones running in other terminals, **New conversation**, and the last few past ones with their age and last prompt. Picking one open in a qmux pane moves focus there and closes this pane instead of opening the conversation twice. Esc quits. Run as a job, such as from a layout, it always asks, and adds **Don't start Claude**, which closes the job; Ctrl+s s starts it again.
 
 Add `qmux` to `untrackedCommands` if the `⏳` badge on a pane running `qmux claude` gets in the way.
 

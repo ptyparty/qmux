@@ -25,6 +25,7 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
   if (choice?.kind !== "new" && choice?.kind !== "resume") {
     renderer.destroy();
     await renderer.closed;
+    if (choice?.kind === "skip") await closeOwnJob();
     return;
   }
   if (choice.kind === "resume") args = ["--resume", choice.sessionId, ...args];
@@ -96,9 +97,10 @@ async function chooseSession(renderer: CliRenderer): Promise<Choice | undefined>
   const cwd = process.cwd();
   const dir = projectDir(cwd);
   const known = sessionIds(dir);
-  if (known.length === 0) return { kind: "new" };
-  const [past, running, live] = await Promise.all([pastSessions(dir, 8), runningSessions(cwd), liveSessions()]);
-  const items = pickerItems({ live, running, past, known, now: Date.now() });
+  const asJob = process.env.QMUX_JOB !== undefined && process.env.QMUX_JOB === process.env.QMUX_PANE_ID;
+  if (known.length === 0 && !asJob) return { kind: "new" };
+  const [past, running, live] = known.length === 0 ? [[], [], []] : await Promise.all([pastSessions(dir, 8), runningSessions(cwd), liveSessions()]);
+  const items = pickerItems({ live, running, past, known, now: Date.now(), asJob });
   if (items.length === 1) return items[0]!.choice;
   await showIfJob();
   return pick(renderer, "Claude", cwd, items.map((item) => ({ label: item.label, detail: item.detail, value: item.choice })));
@@ -140,6 +142,13 @@ function activityReporter(intervalMs = 250): (entries: readonly Entry[]) => void
     pending = latestActivity(entries);
     timer ??= setTimeout(flush, intervalMs);
   };
+}
+
+async function closeOwnJob(): Promise<void> {
+  const { QMUX_SOCKET: control, QMUX_PANE_ID: pane } = process.env;
+  const jobId = Number(pane);
+  if (!control || !Number.isInteger(jobId)) return;
+  await sendControl(control, { method: "job.stop", params: { jobId } }, 1000).catch(() => undefined);
 }
 
 async function showIfJob(): Promise<void> {

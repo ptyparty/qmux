@@ -60,7 +60,7 @@ export class Launcher {
     if (matches) this.matches.content = shown.length > 0 ? styled(matchLines(prompt, shown, this.firstShown)) : styled([fg(theme.muted)("No matching projects")]);
     this.marked.visible = marked.length > 0;
     if (marked.length > 0) this.marked.content = styled(markedLines(marked));
-    this.footer.content = matches ? `↑↓ select · Space mark · Tab complete · Enter open${marked.length > 0 ? ` ${marked.length}` : ""} · Esc cancel` : "Enter confirm · Esc cancel";
+    this.footer.content = matches ? `↑↓ select · Space mark · Tab complete · Enter open${marked.length > 0 ? ` ${marked.length}` : ""} · Alt+Enter without jobs · Esc cancel` : "Enter confirm · Esc cancel";
     const matchRows = matches ? Math.max(shown.length, 1) + 1 : 0;
     this.box.height = 2 + (prompt.detail ? 1 : 0) + 1 + matchRows + markedRows + 2;
   }

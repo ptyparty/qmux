@@ -9,7 +9,8 @@ export type LiveSession = { paneId: number; sessionId: string; tab: string };
 export type Choice =
   | { kind: "new" }
   | { kind: "resume"; sessionId: string }
-  | { kind: "focus"; paneId: number; sessionId: string };
+  | { kind: "focus"; paneId: number; sessionId: string }
+  | { kind: "skip" };
 
 export type PickerItem = { label: string; detail: string; choice: Choice };
 
@@ -82,7 +83,7 @@ export async function runningSessions(cwd: string, timeoutMs = 2000): Promise<Ru
   }
 }
 
-export function pickerItems(input: { live: LiveSession[]; running: RunningSession[]; past: PastSession[]; known: string[]; now: number }): PickerItem[] {
+export function pickerItems(input: { live: LiveSession[]; running: RunningSession[]; past: PastSession[]; known: string[]; now: number; asJob?: boolean }): PickerItem[] {
   const known = new Set(input.known);
   const past = new Map(input.past.map((session) => [session.sessionId, session]));
   const title = (sessionId: string, fallback?: string) => past.get(sessionId)?.title ?? fallback ?? sessionId.slice(0, 8);
@@ -97,6 +98,7 @@ export function pickerItems(input: { live: LiveSession[]; running: RunningSessio
     items.push({ label: title(session.sessionId, session.name), detail: "running in another terminal · open here too", choice: { kind: "resume", sessionId: session.sessionId } });
   }
   items.push({ label: "New conversation", detail: "start fresh", choice: { kind: "new" } });
+  if (input.asJob) items.push({ label: "Don't start Claude", detail: "close this job · ^s s starts it again", choice: { kind: "skip" } });
   for (const session of input.past.filter((past) => !listed.has(past.sessionId))) {
     const prompt = session.lastPrompt ? ` · › ${oneLine(session.lastPrompt, 100)}` : "";
     items.push({ label: title(session.sessionId), detail: `${age(input.now - session.modified)}${prompt}`, choice: { kind: "resume", sessionId: session.sessionId } });

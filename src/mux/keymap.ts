@@ -26,6 +26,7 @@ export type Command =
   | { type: "dismiss-reply" }
   | { type: "toggle-job" }
   | { type: "dock-job" }
+  | { type: "start-layout-jobs" }
   | { type: "last-tab" }
   | { type: "select-widget"; delta: number }
   | { type: "open-widget" }
@@ -167,6 +168,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["r"], command: { type: "rerun-job" } },
       { keys: ["p"], command: { type: "promote-job" }, then: "normal" },
       { keys: ["d"], command: { type: "dock-job" } },
+      { keys: ["s"], command: { type: "start-layout-jobs" }, then: "normal" },
       { keys: ["x"], command: { type: "close-job" } },
       { keys: ["escape"], command: { type: "mode", mode: "normal" } },
     ],
@@ -179,6 +181,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "r", description: "rerun" },
       { keys: "p", description: "to pane" },
       { keys: "d", description: "dock" },
+      { keys: "s", description: "start layout jobs" },
       { keys: "x", description: "close" },
       backHint,
     ],

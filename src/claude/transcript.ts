@@ -129,7 +129,7 @@ export class Transcript {
       case "result":
         this.finishStreaming();
         this.unconfirmed.length = 0;
-        if (this.interrupting) this.pending.clear();
+        if (this.interrupting || (message.is_error && !message.user_message_uuid)) this.pending.clear();
         this.state = this.pending.size > 0 ? "working" : "idle";
         if (typeof message.total_cost_usd === "number") this.cost = message.total_cost_usd;
         if (message.is_error && !this.interrupting) this.notice(message.result || `Claude stopped: ${message.subtype}`, "error");

@@ -186,6 +186,13 @@ describe("Transcript", () => {
     expect(transcript.state).toBe("idle");
   });
 
+  test("a failed turn that names no prompt drops prompts still queued", () => {
+    const transcript = feed(new Transcript(), init);
+    transcript.addPrompt("first", "u1");
+    feed(transcript, { type: "result", subtype: "error_during_execution", is_error: true, result: "worker crashed" });
+    expect(transcript.state).toBe("idle");
+  });
+
   test("an interrupt drops prompts still queued", () => {
     const transcript = feed(new Transcript(), init);
     transcript.addPrompt("first", "u1");

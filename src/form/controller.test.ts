@@ -27,6 +27,31 @@ describe("FormController", () => {
     expect(form.result).toEqual({ status: "submitted", values: { name: "qmux", ok: true, n: 2, env: "prod", tags: [] } });
   });
 
+  test("slides page with left and right, and keep one note per slide", () => {
+    const form = controllerFor([{ type: "slides", id: "shots", slides: [{ path: "a.png" }, { path: "b.png" }, { path: "c.png" }] }]);
+    run(form, "left", "right", "right", "right");
+    expect(form.slides("shots").index).toBe(2);
+    run(form, "next");
+    expect(focusName(form.focused())).toBe("note:shots");
+    form.dispatch({ type: "setNote", id: "shots", value: "too dark" });
+    run(form, "previous", "left");
+    form.dispatch({ type: "setNote", id: "shots", value: "fine" });
+    run(form, "submit");
+    expect(form.result).toEqual({ status: "submitted", values: { shots: ["", "fine", "too dark"] } });
+    const follow = controllerFor([
+      { type: "slides", id: "shots", slides: [{ path: "a.png" }] },
+      { type: "text", id: "why", label: "Why?", when: "shots" },
+    ]);
+    expect(follow.visibleElements().map((element) => element.type)).toEqual(["slides"]);
+    follow.dispatch({ type: "setNote", id: "shots", value: "blurry" });
+    expect(follow.visibleElements().map((element) => element.type)).toEqual(["slides", "text"]);
+    const plain = controllerFor([{ type: "slides", id: "shots", slides: [{ path: "a.png" }], notes: false }]);
+    run(plain, "next");
+    expect(focusName(plain.focused())).toBe("submit");
+    run(plain, "submit");
+    expect(plain.result).toEqual({ status: "submitted", values: { shots: null } });
+  });
+
   test("cancel", () => {
     const form = controllerFor([{ type: "text", id: "name", label: "Name" }]);
     run(form, "cancel");

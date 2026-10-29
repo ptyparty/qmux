@@ -8,6 +8,7 @@ import {
   type FormSpec,
   type InputElement,
   type NumberElement,
+  type SlidesElement,
 } from "./schema.ts";
 import { evaluateWhen, parseWhen, type Expr } from "./when.ts";
 
@@ -20,6 +21,7 @@ export type FormResult =
 export type Focusable =
   | { kind: "input"; element: InputElement }
   | { kind: "other"; element: ChoiceElement }
+  | { kind: "note"; element: SlidesElement }
   | { kind: "submit" };
 
 export type FormAction =
@@ -33,6 +35,7 @@ export type FormAction =
   | { type: "activate" }
   | { type: "setText"; id: string; value: string }
   | { type: "setOtherText"; id: string; value: string }
+  | { type: "setNote"; id: string; value: string }
   | { type: "submit" }
   | { type: "cancel" };
 
@@ -42,6 +45,8 @@ export type ChoiceState = {
   otherSelected: boolean;
   otherText: string;
 };
+
+export type SlidesState = { index: number; notes: string[] };
 
 export type ChoiceRow = { option: ChoiceOption; isOther: boolean };
 
@@ -57,6 +62,7 @@ export class FormController {
   private readonly confirms = new Map<string, boolean>();
   private readonly numbers = new Map<string, number>();
   private readonly choices = new Map<string, ChoiceState>();
+  private readonly slideshows = new Map<string, SlidesState>();
   private focusKey: string;
 
   constructor(spec: FormSpec) {
@@ -72,7 +78,7 @@ export class FormController {
     const visible = new Set<string>();
     return this.spec.elements.filter((element) => {
       const condition = this.conditions.get(element);
-      const shown = condition === undefined || evaluateWhen(condition, (id) => (visible.has(id) ? this.answer(id) : undefined));
+      const shown = condition === undefined || evaluateWhen(condition, (id) => (visible.has(id) ? this.conditionValue(id) : undefined));
       if (shown && isInputElement(element)) visible.add(element.id);
       return shown;
     });
@@ -84,6 +90,7 @@ export class FormController {
       if (!isInputElement(element)) continue;
       focusables.push({ kind: "input", element });
       if (element.type === "choice" && this.choice(element.id).otherSelected) focusables.push({ kind: "other", element });
+      if (element.type === "slides" && takesNotes(element)) focusables.push({ kind: "note", element });
     }
     focusables.push({ kind: "submit" });
     return focusables;
@@ -116,6 +123,12 @@ export class FormController {
     return state;
   }
 
+  slides(id: string): SlidesState {
+    const state = this.slideshows.get(id);
+    if (!state) throw new Error(`no slides element ${id}`);
+    return state;
+  }
+
   choiceRows(element: ChoiceElement): ChoiceRow[] {
     const rows: ChoiceRow[] = choiceOptions(element).map((option) => ({ option, isOther: false }));
     if (allowsOther(element)) rows.push({ option: otherOption, isOther: true });
@@ -134,7 +147,14 @@ export class FormController {
         return this.number(id);
       case "choice":
         return this.choiceAnswer(element);
+      case "slides":
+        return takesNotes(element) ? [...this.slides(id).notes] : null;
     }
+  }
+
+  private conditionValue(id: string): Answer {
+    const answer = this.answer(id);
+    return this.slideshows.has(id) && Array.isArray(answer) ? answer.filter((note) => note !== "") : answer;
   }
 
   dispatch(action: FormAction): void {
@@ -164,6 +184,11 @@ export class FormController {
         this.choice(action.id).otherText = action.value;
         this.errors.delete(action.id);
         return;
+      case "setNote": {
+        const state = this.slides(action.id);
+        state.notes[state.index] = action.value;
+        return;
+      }
       case "submit":
         return this.submit();
       case "cancel":
@@ -185,6 +210,9 @@ export class FormController {
         return;
       case "choice":
         this.choices.set(element.id, initialChoiceState(element));
+        return;
+      case "slides":
+        this.slideshows.set(element.id, { index: 0, notes: element.slides.map(() => "") });
         return;
     }
   }
@@ -221,6 +249,10 @@ export class FormController {
     if (focused.kind !== "input") return;
     if (focused.element.type === "confirm") this.confirms.set(focused.element.id, delta < 0);
     if (focused.element.type === "number") this.stepNumber(focused.element, delta);
+    if (focused.element.type === "slides") {
+      const state = this.slides(focused.element.id);
+      state.index = Math.min(Math.max(state.index + delta, 0), focused.element.slides.length - 1);
+    }
   }
 
   private stepNumber(element: NumberElement, delta: number): void {
@@ -300,6 +332,10 @@ export class FormController {
     if (element.required && empty) return element.multi ? "Select at least one option" : "Select an option";
     return undefined;
   }
+}
+
+export function takesNotes(element: SlidesElement): boolean {
+  return element.notes ?? true;
 }
 
 function initialChoiceState(element: ChoiceElement): ChoiceState {

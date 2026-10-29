@@ -183,6 +183,27 @@ describe("form view", () => {
     expect(frame).toContain("\u{10EEEE}");
   });
 
+  test("shows one slide at a time and sends each image once", async () => {
+    const path = `${process.env.TMPDIR ?? "/tmp"}/qmux-slides-test-${process.pid}.png`;
+    await Bun.write(path, tinyPng(40, 20));
+    const written: string[] = [];
+    const { setup, result } = await open(
+      [{ type: "slides", id: "shots", label: "Screens", slides: [{ path, caption: "Login" }, { path, caption: "Home" }] }],
+      { enabled: true, write: (commands) => written.push(...commands) },
+    );
+    expect(await renderedWith(setup, "1/2")).toContain("1/2 · Login");
+    expect(written).toHaveLength(1);
+    setup.mockInput.pressArrow("right");
+    expect(await renderedWith(setup, "2/2")).toContain("2/2 · Home");
+    setup.mockInput.pressArrow("left");
+    expect(await renderedWith(setup, "1/2")).toContain("1/2 · Login");
+    expect(written).toHaveLength(2);
+    setup.mockInput.pressTab();
+    await setup.mockInput.typeText("blurry");
+    setup.mockInput.pressKey("s", { ctrl: true });
+    expect(await result).toEqual({ status: "submitted", values: { shots: ["blurry", ""] } });
+  });
+
   test("says when an image cannot be read", async () => {
     const { setup } = await open([{ type: "image", path: "/nonexistent/shot.png" }], { enabled: true, write: () => {} });
     const frame = await renderedWith(setup, "Could not show");

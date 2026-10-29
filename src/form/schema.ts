@@ -80,6 +80,21 @@ export const imageElement = z.object({
   when,
 });
 
+export const slidesElement = z.object({
+  type: z.literal("slides"),
+  ...inputFields,
+  label: z.string().optional().describe("Shown above the slides"),
+  slides: z
+    .array(
+      z.object({
+        path: z.string().describe("Image file to show (PNG, JPEG, WebP, or GIF); a relative path is resolved against the asker's working directory"),
+        caption: z.string().optional(),
+      }),
+    )
+    .min(1),
+  notes: z.boolean().optional().describe("Let the user leave a note on each slide; the answer is one note per slide. Defaults to true."),
+});
+
 export const element = z.discriminatedUnion("type", [
   textElement,
   confirmElement,
@@ -88,6 +103,7 @@ export const element = z.discriminatedUnion("type", [
   noteElement,
   markdownElement,
   imageElement,
+  slidesElement,
 ]);
 
 export const formSpec = z
@@ -107,6 +123,7 @@ export type ConfirmElement = z.infer<typeof confirmElement>;
 export type ChoiceElement = z.infer<typeof choiceElement>;
 export type NumberElement = z.infer<typeof numberElement>;
 export type ImageElement = z.infer<typeof imageElement>;
+export type SlidesElement = z.infer<typeof slidesElement>;
 export type ChoiceOption = { value: string; label: string; description?: string };
 
 export function parseFormSpec(input: unknown): FormSpec {
@@ -118,7 +135,11 @@ export function isInputElement(element: Element): element is InputElement {
 }
 
 export function resolveImagePaths(spec: FormSpec, cwd: string): FormSpec {
-  const elements = spec.elements.map((element) => (element.type === "image" ? { ...element, path: resolve(cwd, element.path) } : element));
+  const elements = spec.elements.map((element) => {
+    if (element.type === "image") return { ...element, path: resolve(cwd, element.path) };
+    if (element.type === "slides") return { ...element, slides: element.slides.map((slide) => ({ ...slide, path: resolve(cwd, slide.path) })) };
+    return element;
+  });
   return { ...spec, elements };
 }
 

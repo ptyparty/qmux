@@ -15,10 +15,10 @@ import {
   type TextChunk,
 } from "@opentui/core";
 import { styled, type Part } from "../ui/styled.ts";
-import { FormController, type FormResult, type Focusable } from "./controller.ts";
+import { FormController, takesNotes, type FormResult, type Focusable } from "./controller.ts";
 import { isEditing, keyHints, keyToAction, type EditorPosition } from "./keys.ts";
-import { fitImage, imageIdColor, newImageId, placeholderLines, readImage, terminalImageOutput, uploadCommands, type ImageOutput } from "./image.ts";
-import type { ChoiceElement, ConfirmElement, Element, ImageElement, NumberElement, TextElement } from "./schema.ts";
+import { fitImage, imageIdColor, newImageId, placeholderLines, readImage, terminalImageOutput, uploadCommands, type ImageBox, type ImageOutput } from "./image.ts";
+import type { ChoiceElement, ConfirmElement, Element, ImageElement, NumberElement, SlidesElement, TextElement } from "./schema.ts";
 
 const palette = {
   accent: "#7e9cd8",
@@ -35,6 +35,7 @@ interface ElementView {
   sync(): void;
   flush(): void;
   editorFor(focusable: Focusable): Editor | undefined;
+  editors(): Editor[];
 }
 
 export function runForm(renderer: CliRenderer, controller: FormController, images: ImageOutput = terminalImageOutput()): Promise<FormResult> {
@@ -145,7 +146,7 @@ class FormView {
     const focused = this.controller.focused();
     const editor = isEditing(focused) ? this.editorFor(focused) : undefined;
     for (const view of this.views.values()) {
-      for (const candidate of editorsOf(view)) if (candidate !== editor) candidate.blur();
+      for (const candidate of view.editors()) if (candidate !== editor) candidate.blur();
     }
     editor?.focus();
   }
@@ -173,6 +174,8 @@ class FormView {
         return new MarkdownView(this.renderer, element.text);
       case "image":
         return new ImageView(this.renderer, element, this.images);
+      case "slides":
+        return new SlidesView(this.renderer, this.controller, element, this.images, this.changed);
       case "text":
         return new TextView(this.renderer, this.controller, element, this.changed);
       case "confirm":
@@ -190,12 +193,6 @@ function editorPosition(editor: Editor | undefined): EditorPosition | undefined 
   const text = editor.plainText;
   const offset = editor.cursorOffset;
   return { onFirstLine: !text.slice(0, offset).includes("\n"), onLastLine: !text.slice(offset).includes("\n") };
-}
-
-function editorsOf(view: ElementView): Editor[] {
-  if (view instanceof TextView) return [view.editor];
-  if (view instanceof ChoiceView) return [view.other];
-  return [];
 }
 
 function elementRootId(id: string): string {
@@ -227,6 +224,10 @@ class NoteView implements ElementView {
   editorFor(): undefined {
     return undefined;
   }
+
+  editors(): Editor[] {
+    return [];
+  }
 }
 
 class MarkdownView implements ElementView {
@@ -243,6 +244,10 @@ class MarkdownView implements ElementView {
 
   editorFor(): undefined {
     return undefined;
+  }
+
+  editors(): Editor[] {
+    return [];
   }
 }
 
@@ -264,17 +269,12 @@ class ImageView implements ElementView {
   }
 
   private showImage(renderer: CliRenderer, element: ImageElement, images: ImageOutput): boolean {
-    let image;
-    try {
-      image = readImage(element.path);
-    } catch (error) {
-      this.root.add(new TextRenderable(renderer, { content: `Could not show ${element.path}: ${(error as Error).message}`, fg: palette.error }));
+    const sent = sendImage(element.path, renderer.width - imageMargin.cols, renderer.height - imageMargin.rows, images);
+    if ("error" in sent) {
+      this.root.add(new TextRenderable(renderer, { content: sent.error, fg: palette.error }));
       return true;
     }
-    const box = fitImage(image.info.width, image.info.height, renderer.width - imageMargin.cols, renderer.height - imageMargin.rows);
-    const id = newImageId();
-    images.write(uploadCommands(id, image, box));
-    this.root.add(new TextRenderable(renderer, { content: placeholderLines(box).join("\n"), fg: imageIdColor(id), wrapMode: "none", height: box.rows, flexShrink: 0 }));
+    this.root.add(new TextRenderable(renderer, { content: placeholderLines(sent.box).join("\n"), fg: imageIdColor(sent.id), wrapMode: "none", height: sent.box.rows, flexShrink: 0 }));
     return true;
   }
 
@@ -285,6 +285,108 @@ class ImageView implements ElementView {
   editorFor(): undefined {
     return undefined;
   }
+
+  editors(): Editor[] {
+    return [];
+  }
+}
+
+const slidesMargin = { cols: 5, rows: 12 };
+
+class SlidesView implements ElementView {
+  readonly root: BoxRenderable;
+  private readonly note: InputRenderable | undefined;
+  private readonly label: TextRenderable;
+  private readonly picture: TextRenderable;
+  private readonly message: TextRenderable;
+  private readonly counter: TextRenderable;
+  private readonly sent = new Map<number, SentImage>();
+  private shown: number | undefined;
+
+  constructor(
+    private readonly renderer: CliRenderer,
+    private readonly controller: FormController,
+    private readonly element: SlidesElement,
+    private readonly images: ImageOutput,
+    changed: () => void,
+  ) {
+    this.root = new BoxRenderable(renderer, { id: elementRootId(element.id), flexDirection: "column" });
+    this.label = new TextRenderable(renderer, {});
+    this.picture = new TextRenderable(renderer, { wrapMode: "none", flexShrink: 0, visible: false });
+    this.message = new TextRenderable(renderer, { marginLeft: 2, visible: false });
+    this.counter = new TextRenderable(renderer, {});
+    for (const part of [this.label, this.picture, this.message, this.counter]) this.root.add(part);
+    if (takesNotes(element)) {
+      this.note = new InputRenderable(renderer, {
+        placeholder: "Note on this slide (optional)",
+        marginLeft: 2,
+        focusedBackgroundColor: "#2a2a37",
+        onContentChange: () => {
+          if (this.note!.plainText === this.currentNote()) return;
+          controller.dispatch({ type: "setNote", id: element.id, value: this.note!.plainText });
+          changed();
+        },
+      });
+      this.root.add(this.note);
+    }
+  }
+
+  sync(): void {
+    const focused = this.controller.isFocused({ kind: "input", element: this.element }) || this.controller.isFocused({ kind: "note", element: this.element });
+    const label = this.element.label ?? "Slides";
+    this.label.content = styled([focused ? fg(palette.accent)("› ") : "  ", focused ? bold(label) : label]);
+    const { index } = this.controller.slides(this.element.id);
+    if (index !== this.shown) this.show(index);
+    const caption = this.element.slides[index]!.caption;
+    this.counter.content = styled([fg(palette.muted)(`  ${index + 1}/${this.element.slides.length}`), ...(caption ? [fg(palette.muted)(" · "), caption] : [])]);
+  }
+
+  flush(): void {
+    if (this.note && this.note.plainText !== this.currentNote()) this.controller.dispatch({ type: "setNote", id: this.element.id, value: this.note.plainText });
+  }
+
+  editorFor(focusable: Focusable): Editor | undefined {
+    return focusable.kind === "note" ? this.note : undefined;
+  }
+
+  editors(): Editor[] {
+    return this.note ? [this.note] : [];
+  }
+
+  private currentNote(): string {
+    const { index, notes } = this.controller.slides(this.element.id);
+    return notes[index] ?? "";
+  }
+
+  private show(index: number): void {
+    this.shown = index;
+    const { path } = this.element.slides[index]!;
+    const sent = this.images.enabled ? (this.sent.get(index) ?? sendImage(path, this.renderer.width - slidesMargin.cols, this.renderer.height - slidesMargin.rows, this.images)) : undefined;
+    if (sent) this.sent.set(index, sent);
+    if (sent && "box" in sent) {
+      this.picture.content = styled([fg(imageIdColor(sent.id))(placeholderLines(sent.box).join("\n"))]);
+      this.picture.height = sent.box.rows;
+    }
+    this.picture.visible = sent !== undefined && "box" in sent;
+    this.message.content = sent && "error" in sent ? styled([fg(palette.error)(sent.error)]) : styled([fg(palette.muted)(`[image] ${path}`)]);
+    this.message.visible = !this.picture.visible;
+    if (this.note && this.note.plainText !== this.currentNote()) this.note.value = this.currentNote();
+  }
+}
+
+type SentImage = { id: number; box: ImageBox } | { error: string };
+
+function sendImage(path: string, maxCols: number, maxRows: number, images: ImageOutput): SentImage {
+  let image;
+  try {
+    image = readImage(path);
+  } catch (error) {
+    return { error: `Could not show ${path}: ${(error as Error).message}` };
+  }
+  const box = fitImage(image.info.width, image.info.height, maxCols, maxRows);
+  const id = newImageId();
+  images.write(uploadCommands(id, image, box));
+  return { id, box };
 }
 
 export function markdownStyle(renderer: CliRenderer): SyntaxStyle {
@@ -363,6 +465,10 @@ abstract class InputView implements ElementView {
   editorFor(_focusable: Focusable): Editor | undefined {
     return undefined;
   }
+
+  editors(): Editor[] {
+    return [];
+  }
 }
 
 class TextView extends InputView {
@@ -396,6 +502,10 @@ class TextView extends InputView {
 
   override editorFor(): Editor {
     return this.editor;
+  }
+
+  override editors(): Editor[] {
+    return [this.editor];
   }
 }
 
@@ -489,6 +599,10 @@ class ChoiceView extends InputView {
 
   override editorFor(focusable: Focusable): Editor | undefined {
     return focusable.kind === "other" ? this.other : undefined;
+  }
+
+  override editors(): Editor[] {
+    return [this.other];
   }
 }
 

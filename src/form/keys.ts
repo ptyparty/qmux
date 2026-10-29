@@ -55,6 +55,7 @@ function modeKeys(focused: Focusable, position?: EditorPosition): Record<string,
 function focusHints(focused: Focusable): KeyHint[] {
   if (focused.kind === "submit") return [{ keys: "Enter", action: "submit" }];
   if (focused.kind === "other") return [{ keys: "type", action: "other answer" }];
+  if (focused.kind === "note") return [{ keys: "type", action: "note on this slide" }, { keys: "↑", action: "back to the slide" }];
   switch (focused.element.type) {
     case "text":
       return focused.element.multiline
@@ -68,11 +69,13 @@ function focusHints(focused: Focusable): KeyHint[] {
       return focused.element.multi
         ? [{ keys: "↑↓", action: "move" }, { keys: "Space", action: "toggle" }]
         : [{ keys: "↑↓", action: "choose" }];
+    case "slides":
+      return [{ keys: "←→", action: "previous/next slide" }];
   }
 }
 
 export function isEditing(focused: Focusable): boolean {
-  return focused.kind === "other" || (focused.kind === "input" && focused.element.type === "text");
+  return focused.kind === "other" || focused.kind === "note" || (focused.kind === "input" && focused.element.type === "text");
 }
 
 function multilineEdges(position: EditorPosition | undefined): Record<string, FormAction> {

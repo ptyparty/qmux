@@ -1,4 +1,4 @@
-import { query, type PermissionResult as SdkPermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { filterEscalatingDefaultMode, query, resolveSettings, type PermissionResult as SdkPermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { claudeExited } from "../hooks/hook.ts";
 import type { PermissionRequest, PermissionResult } from "./permissions.ts";
 import { modeArgument, nextMode, parseCommands, parseMode, permissionModes, type PermissionMode, type SlashCommand } from "./commands.ts";
@@ -26,10 +26,11 @@ export class ClaudeSession {
   private interrupted = false;
 
   constructor(private readonly options: SessionOptions) {
+    const parsed = claudeOptions(options.args);
     this.query = query({
       prompt: this.prompts,
       options: {
-        ...claudeOptions(options.args),
+        ...parsed,
         cwd: options.cwd,
         env: { ...options.env, QMUX_NATIVE_CLAUDE: "1" },
         includePartialMessages: true,
@@ -38,6 +39,15 @@ export class ClaudeSession {
         stderr: (data) => (this.stderr = [...this.stderr, ...data.split("\n").filter((line) => line.trim())].slice(-3)),
       },
     });
+    this.transcript.mode = parsed.permissionMode;
+    if (!parsed.permissionMode)
+      resolveSettings({ cwd: options.cwd }).then(
+        (resolved) => {
+          this.transcript.mode ??= parseMode(filterEscalatingDefaultMode(resolved).permissions?.defaultMode ?? "") ?? "default";
+          options.onChange();
+        },
+        () => {},
+      );
     this.query.supportedCommands().then(
       (commands) => {
         this.commands = parseCommands(commands);

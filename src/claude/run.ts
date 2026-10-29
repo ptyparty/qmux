@@ -8,7 +8,6 @@ import { declineHooks, defaultHookCommand, hooksDeclined, installHooks, missingH
 import { pick } from "./picker.ts";
 import { pastSessions, pickerItems, projectDir, readHistory, runningSessions, sessionIds, type Choice, type LiveSession } from "./sessions.ts";
 import { ClaudeSession } from "./session.ts";
-import { claudeOptions } from "./options.ts";
 import { reportState } from "../hooks/hook.ts";
 import { askOwner } from "../ask/ask.ts";
 import type { Entry } from "./transcript.ts";
@@ -38,6 +37,10 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
         dormant: true,
         commands: () => session?.commands ?? [],
         mode: () => session?.transcript.mode,
+        cycleMode: () => {
+          session?.cycleMode();
+          return session?.transcript.mode;
+        },
         wokenAgain: () => void (session ? undefined : showIfJob()),
       });
     }
@@ -88,7 +91,6 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
         }
       },
     });
-    session.transcript.mode ??= claudeOptions(args).permissionMode;
     reportMode(session.transcript.mode);
     session.transcript.replay(history);
     view = new ClaudeView(renderer, session, () => quit());
@@ -99,7 +101,15 @@ export async function runClaude(args: string[], options: { pick: boolean }): Pro
     if (inbox) {
       await inbox.awaken();
       await requestCompose();
-    } else inbox = await openInbox(deliverTo, { commands: () => target.commands, mode: () => target.transcript.mode });
+    } else
+      inbox = await openInbox(deliverTo, {
+        commands: () => target.commands,
+        mode: () => target.transcript.mode,
+        cycleMode: () => {
+          target.cycleMode();
+          return target.transcript.mode;
+        },
+      });
     const code = await Promise.race([quitting.then(() => 0), session.exited]);
     const last = session.transcript.entries.at(-1);
     if (code !== 0 && last?.kind === "notice") failure = last.text;
@@ -288,7 +298,7 @@ function requestCompose(): Promise<void> {
 
 async function openInbox(
   onText: (text: string) => void,
-  options: { dormant?: boolean; commands?: () => SlashCommand[]; mode?: () => string | undefined; wokenAgain?: () => void } = {},
+  options: { dormant?: boolean; commands?: () => SlashCommand[]; mode?: () => string | undefined; cycleMode?: () => string | undefined; wokenAgain?: () => void } = {},
 ): Promise<Inbox | undefined> {
   const { QMUX_SOCKET: control, QMUX_PANE_ID: pane, QMUX_TAB_DIR: dir } = process.env;
   const paneId = Number(pane);
@@ -305,8 +315,9 @@ async function openInbox(
         buffers.set(socket, lines.pop()!);
         for (const line of lines) {
           try {
-            const { text, wake: woken, commands } = JSON.parse(line) as { text?: unknown; wake?: unknown; commands?: unknown };
-            if (commands === true) socket.write(`${JSON.stringify({ commands: options.commands?.() ?? [], mode: options.mode?.() })}\n`);
+            const { text, wake: woken, commands, cycleMode } = JSON.parse(line) as { text?: unknown; wake?: unknown; commands?: unknown; cycleMode?: unknown };
+            if (cycleMode === true) socket.write(`${JSON.stringify({ mode: options.cycleMode?.() })}\n`);
+            else if (commands === true) socket.write(`${JSON.stringify({ commands: options.commands?.() ?? [], mode: options.mode?.() })}\n`);
             else if (woken === true) (wake ?? options.wokenAgain)?.();
             else if (typeof text === "string" && text.trim()) onText(text.trim());
           } catch {}
@@ -348,7 +359,7 @@ async function openInbox(
 
 export async function runCompose(socket: string, name: string): Promise<void> {
   const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
-  const text = await composeMessage(renderer, name, () => fetchInbox(socket));
+  const text = await composeMessage(renderer, name, () => fetchInbox(socket), () => askInbox(socket, { cycleMode: true }));
   renderer.destroy();
   await renderer.closed;
   if (text) await deliver(socket, text);
@@ -356,11 +367,11 @@ export async function runCompose(socket: string, name: string): Promise<void> {
 
 type InboxInfo = { commands: SlashCommand[]; mode?: string };
 
-function composeMessage(renderer: CliRenderer, name: string, load: () => Promise<InboxInfo>): Promise<string | undefined> {
+function composeMessage(renderer: CliRenderer, name: string, load: () => Promise<InboxInfo>, cycleMode: () => Promise<InboxInfo>): Promise<string | undefined> {
   return new Promise((resolve) => {
     let commands: SlashCommand[] = [];
     let loading: Promise<void> | undefined;
-    const title = (mode?: string) => `To ${name}${mode ? ` (${mode} mode)` : ""} · / commands · Enter send · Alt+Enter newline · Esc cancel`;
+    const title = (mode?: string) => `To ${name}${mode ? ` (${mode} mode)` : ""} · / commands · Enter send · Alt+Enter newline · Shift+Tab mode · Esc cancel`;
     const fetch = () => {
       loading ??= load().then((found) => {
         commands = found.commands;
@@ -392,13 +403,22 @@ function composeMessage(renderer: CliRenderer, name: string, load: () => Promise
     input.focus();
     fetch();
     renderer.keyInput.on("keypress", (key: KeyEvent) => {
-      if (completion.handleKey(key)) key.preventDefault();
+      if (key.name === "tab" && key.shift) {
+        key.preventDefault();
+        void cycleMode().then((found) => {
+          if (found.mode) header.content = title(found.mode);
+        });
+      } else if (completion.handleKey(key)) key.preventDefault();
       else if (key.name === "escape") resolve(undefined);
     });
   });
 }
 
-function fetchInbox(socket: string, timeoutMs = 1000): Promise<InboxInfo> {
+function fetchInbox(socket: string): Promise<InboxInfo> {
+  return askInbox(socket, { commands: true });
+}
+
+function askInbox(socket: string, request: { commands: true } | { cycleMode: true }, timeoutMs = 1000): Promise<InboxInfo> {
   return new Promise((resolve) => {
     let buffer = "";
     const timer = setTimeout(() => resolve({ commands: [] }), timeoutMs);
@@ -409,7 +429,7 @@ function fetchInbox(socket: string, timeoutMs = 1000): Promise<InboxInfo> {
     Bun.connect({
       unix: socket,
       socket: {
-        open: (connection) => void connection.write(`${JSON.stringify({ commands: true })}\n`),
+        open: (connection) => void connection.write(`${JSON.stringify(request)}\n`),
         data: (connection, data) => {
           buffer += data.toString();
           const newline = buffer.indexOf("\n");

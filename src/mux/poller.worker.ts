@@ -1,4 +1,5 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { libcPath } from "./libc.ts";
 
 declare const self: Worker;
 
@@ -6,7 +7,7 @@ const POLLIN = 0x1;
 const POLLERR = 0x8;
 const POLLHUP = 0x10;
 
-const libc = dlopen("libc.so.6", {
+const libc = dlopen(libcPath, {
   poll: { args: [FFIType.ptr, FFIType.u64, FFIType.i32], returns: FFIType.i32 },
   read: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
 });

@@ -1,32 +1,23 @@
-import { dlopen, FFIType, ptr, read as readMemory } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { closeSync, writeSync } from "node:fs";
+import { EAGAIN, errno, fcntl, ioctl, libcPath, O_NONBLOCK, TIOCSWINSZ } from "./libc.ts";
 
-const TIOCSWINSZ = 0x5414;
 const F_GETFL = 3;
 const F_SETFL = 4;
-const O_NONBLOCK = 0o4000;
-const EAGAIN = 11;
 const EINTR = 4;
 const maxSlots = 512;
 const readSize = 64 * 1024;
 const writeRetryMs = 10;
 const maxPendingInput = 1024 * 1024;
 
-const libc = dlopen("libc.so.6", {
+const libc = dlopen(libcPath, {
   openpty: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-  ioctl: { args: [FFIType.i32, FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
-  fcntl: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
   pipe: { args: [FFIType.ptr], returns: FFIType.i32 },
   read: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
-  __errno_location: { args: [], returns: FFIType.ptr },
 });
 
-function errno(): number {
-  return readMemory.i32(libc.symbols.__errno_location()!, 0);
-}
-
 function setNonBlocking(fd: number): void {
-  libc.symbols.fcntl(fd, F_SETFL, libc.symbols.fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
 }
 
 class Reactor {
@@ -221,7 +212,7 @@ export class Pty {
 
   resize(cols: number, rows: number, width = 0, height = 0): void {
     const size = new Uint16Array([rows, cols, width, height]);
-    libc.symbols.ioctl(this.master, TIOCSWINSZ, ptr(size));
+    ioctl(this.master, TIOCSWINSZ, ptr(size));
   }
 
   kill(): void {

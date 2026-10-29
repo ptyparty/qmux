@@ -100,6 +100,7 @@ Closing a tab closes its jobs. A job's output is also written to `$QMUX_TAB_DIR/
 `qmux claude [--resume ID|--continue] [-- CLAUDE_ARGS...]` runs a Claude Code session in the pane with qmux drawing the conversation instead of Claude's own TUI. Claude's text renders as markdown as it streams, each tool call is one line that gets a ✓ or ✗ when it finishes, and a status line shows whether Claude is ready, working or waiting for you, with the model, cost and session id. Arguments after `--` go to `claude`, for example `-- --model sonnet --permission-mode acceptEdits`.
 
 - **Enter** sends the message in the box at the bottom, **Alt+Enter** adds a newline, and messages sent while Claude works wait their turn.
+- **/** lists Claude's slash commands, skills included, filtered as you type. ↑↓ pick one, **Tab** completes it so you can add arguments, **Enter** runs it, and **Esc** hides the list (and still interrupts Claude while it works). `/exit` and `/quit` quit.
 - **Esc** interrupts Claude while it works.
 - **PgUp/PgDn** or the mouse wheel scroll back through the conversation.
 - **Ctrl+d** on an empty box quits and prints `claude --resume <id>`, so the conversation can carry on in Claude's TUI. A conversation can't be open in both at once.

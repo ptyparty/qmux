@@ -1,4 +1,5 @@
 import type { PermissionRequest, PermissionResult } from "./permissions.ts";
+import { parseCommands, type SlashCommand } from "./commands.ts";
 import { Transcript, type StreamMessage } from "./transcript.ts";
 
 export const claudeFlags = [
@@ -21,10 +22,15 @@ export type SessionOptions = {
   onChange: () => void;
 };
 
+type ControlResponse = { type: "control_response"; response: { subtype: string; request_id: string; response?: { commands?: unknown } } };
+
+const initializeId = "qmux-initialize";
+
 type ControlRequest = { type: "control_request"; request_id: string; request: { subtype: string; tool_name?: string; input?: Record<string, unknown>; permission_suggestions?: PermissionRequest["permission_suggestions"] } };
 
 export class ClaudeSession {
   readonly transcript = new Transcript();
+  commands: SlashCommand[] = [];
   readonly exited: Promise<number>;
   private readonly proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   private nextRequest = 1;
@@ -39,6 +45,7 @@ export class ClaudeSession {
     });
     const stderr = new Response(this.proc.stderr).text();
     void this.read();
+    this.write({ type: "control_request", request_id: initializeId, request: { subtype: "initialize" } });
     this.exited = this.proc.exited.then(async (code) => {
       const detail = (await stderr).trim().split("\n").slice(-3).join("\n");
       this.transcript.ended(`Claude exited${code ? ` with code ${code}` : ""}${detail ? `: ${detail}` : ""}`);
@@ -86,13 +93,18 @@ export class ClaudeSession {
   }
 
   private handle(line: string): void {
-    let message: StreamMessage | ControlRequest;
+    let message: StreamMessage | ControlRequest | ControlResponse;
     try {
       message = JSON.parse(line);
     } catch {
       return;
     }
     if (message.type === "control_request") return void this.answer(message as ControlRequest);
+    if (message.type === "control_response") {
+      const { response } = message as ControlResponse;
+      if (response.request_id === initializeId && response.subtype === "success") this.commands = parseCommands(response.response?.commands);
+      return;
+    }
     this.transcript.apply(message as StreamMessage);
   }
 

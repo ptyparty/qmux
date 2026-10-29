@@ -147,11 +147,22 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     } else if (panes.has(id)) paneSessions.set(id, sessionId);
   };
 
+  const wakeClaude = (socket: string) => {
+    void Bun.connect({
+      unix: socket,
+      socket: {
+        open: (connection) => void connection.end(`${JSON.stringify({ wake: true })}\n`),
+        data: () => {},
+      },
+    }).catch(() => undefined);
+  };
+
   const destroyPane = (id: PaneId) => {
     panes.get(id)?.destroy();
     panes.delete(id);
     closeJobLog(id);
     nativeClaudes.delete(id);
+    workspace.dormant.delete(id);
     paneSessions.delete(id);
     workspace.activities.delete(id);
     graphics.forgetPane(id);
@@ -214,9 +225,14 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       });
     },
     composeClaude: (near, candidates) => {
-      const target = nativeClaudes.has(near) ? near : candidates.find((id) => nativeClaudes.has(id));
+      const awake = (id: PaneId) => nativeClaudes.has(id) && !workspace.dormant.has(id);
+      const target = awake(near) ? near : (candidates.find(awake) ?? (nativeClaudes.has(near) ? near : candidates.find((id) => nativeClaudes.has(id))));
       if (target === undefined) return "No native Claude in this tab";
-      const name = workspace.paneNames.get(target) ?? "Claude";
+      if (workspace.dormant.has(target)) {
+        wakeClaude(nativeClaudes.get(target)!);
+        return undefined;
+      }
+      const name = workspace.paneNames.get(target) ?? workspace.jobStatus(target)?.name ?? "Claude";
       openViewPopup(near, [...selfCommand(), "claude", "compose", "--socket", nativeClaudes.get(target)!, "--name", name], `Message ${name}`, { width: 70, height: 30 });
       return undefined;
     },
@@ -420,14 +436,26 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           workspace.closeJob(request.params.jobId);
           refresh();
           return { ok: true };
-        case "claude.register":
-          if (!panes.has(request.params.paneId)) return { ok: false, error: `no pane ${request.params.paneId}` };
-          if (request.params.socket === null) nativeClaudes.delete(request.params.paneId);
+        case "claude.register": {
+          const { paneId, socket, dormant } = request.params;
+          if (!panes.has(paneId)) return { ok: false, error: `no pane ${paneId}` };
+          if (socket === null) nativeClaudes.delete(paneId);
           else {
-            nativeClaudes.set(request.params.paneId, request.params.socket);
-            workspace.markAgent(request.params.paneId);
-            refresh();
+            nativeClaudes.set(paneId, socket);
+            workspace.markAgent(paneId);
           }
+          if (socket !== null && dormant) workspace.dormant.add(paneId);
+          else workspace.dormant.delete(paneId);
+          refresh();
+          return { ok: true };
+        }
+        case "claude.compose": {
+          const message = host.composeClaude(request.params.paneId, [request.params.paneId]);
+          return message ? { ok: false, error: message } : { ok: true };
+        }
+        case "job.hide":
+          workspace.popupExited(request.params.jobId);
+          refresh();
           return { ok: true };
         case "session.quit":
           workspace.quit = true;

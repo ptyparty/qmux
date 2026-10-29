@@ -985,6 +985,14 @@ describe("Workspace", () => {
       expect(workspace.popup).toMatchObject({ id: claude, kind: "job" });
     });
 
+    test("a dormant Claude job forgets that it was dormant when it closes", () => {
+      const { workspace } = ide({ now: 0 });
+      const claude = workspace.runJob(2, ["qmux", "claude"], "claude")!;
+      workspace.dormant.add(claude);
+      workspace.closeJob(claude);
+      expect(workspace.dormant.has(claude)).toBe(false);
+    });
+
     test("Alt j hides the open job, running or finished, and reopens the last one", () => {
       const { workspace } = ide({ now: 0 });
       press(workspace, "alt+j");

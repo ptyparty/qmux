@@ -594,6 +594,55 @@ describe("Workspace", () => {
     expect(workspace.openProject("nothing-like-it")).toBe('No project matches "nothing-like-it"');
   });
 
+  describe("layout args", () => {
+    const config = configSchema.parse({
+      layouts: {
+        "pr-review": {
+          args: ["pr"],
+          name: "{project} #{pr}",
+          jobs: [{ command: ["gh", "pr", "checks", "{pr}", "--watch"], name: "checks {pr}" }],
+          drawer: { command: ["gh", "pr", "view", "{pr}"] },
+          row: [{ command: ["remax", "--pr", "{pr}"], focus: true }, { command: ["awk", "{print}"] }],
+        },
+      },
+    });
+
+    test("--repo and --layout open the repo's clone with the args filled in", () => {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home", config);
+      expect(workspace.openProject({ repo: "Exfresso/Merlin" }, true, { layout: "pr-review", args: { pr: "42" } })).toBeUndefined();
+      const tab = workspace.tab;
+      expect(tab.name).toBe("merlin #42");
+      expect(host.created.slice(1)).toEqual([
+        [2, "/work/exfresso/merlin"],
+        [3, "/work/exfresso/merlin"],
+      ]);
+      expect(paneIds(tab.root).map((id) => host.commands.get(id))).toEqual([["remax", "--pr", "42"], ["awk", "{print}"]]);
+      expect(host.layoutJobs()).toEqual([[["gh", "pr", "checks", "42", "--watch"], tab.id, "/work/exfresso/merlin"]]);
+      expect(workspace.tabJobs().map((job) => job.name)).toEqual(["checks 42"]);
+      expect(tab.drawerSpec).toEqual({ command: ["gh", "pr", "view", "42"] });
+    });
+
+    test("the same args switch to the open tab, and other args open another", () => {
+      const workspace = new Workspace(new FakeHost(), "/home", config);
+      workspace.openProject("merlin", true, { layout: "pr-review", args: { pr: "42" } });
+      workspace.openProject("merlin", true, { layout: "pr-review", args: { pr: "7" } });
+      workspace.openProject({ repo: "exfresso/merlin" }, true, { layout: "pr-review", args: { pr: "42" } });
+      expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "merlin #42", "merlin #7"]);
+      expect(workspace.tab.name).toBe("merlin #42");
+    });
+
+    test("missing, extra, and unknown layouts and repos are reported", () => {
+      const workspace = new Workspace(new FakeHost(), "/home", config);
+      expect(workspace.openProject("merlin", true, { layout: "pr-review" })).toBe("pr-review needs --arg pr=VALUE");
+      expect(workspace.openProject("merlin", true, { layout: "pr-review", args: { pr: "1", base: "main" } })).toBe("pr-review takes no base arg");
+      expect(workspace.openProject("merlin", true, { args: { pr: "1" } })).toBe("merlin has no layout to take --arg pr");
+      expect(workspace.openProject("merlin", true, { layout: "nope" })).toBe("No layout named nope");
+      expect(workspace.openProject({ repo: "flipstone/merlin" })).toBe("No clone of flipstone/merlin under the project roots");
+      expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1"]);
+    });
+  });
+
   test("a held pane re-runs on Enter, becomes a shell on Esc, and closes on Ctrl+c", () => {
     const host = new FakeHost();
     const workspace = new Workspace(host);

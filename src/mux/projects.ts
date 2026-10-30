@@ -33,6 +33,11 @@ export function resolveTarget(target: string, cwd: string, projects: Project[]):
   return rankProjects(target, projects)[0];
 }
 
+export function findRepo(repo: string, projects: Project[]): Project | undefined {
+  const suffix = `/${repo.toLowerCase()}`;
+  return projects.find((project) => project.dir.toLowerCase().endsWith(suffix));
+}
+
 export function rankProjects(query: string, projects: Project[]): Project[] {
   const needle = query.toLowerCase();
   if (needle === "") return projects;

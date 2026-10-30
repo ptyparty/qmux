@@ -6,7 +6,13 @@ export const controlRequest = z.discriminatedUnion("method", [
     method: z.literal("popup.open"),
     params: z.object({ title: z.string(), command: z.array(z.string()).min(1), paneId: z.number().int().optional() }),
   }),
-  z.object({ method: z.literal("project.open"), params: z.object({ target: z.string().min(1) }) }),
+  z.object({
+    method: z.literal("project.open"),
+    params: z.union([
+      z.object({ target: z.string().min(1), layout: z.string().min(1).optional(), args: z.record(z.string(), z.string()).default({}) }),
+      z.object({ repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/), layout: z.string().min(1).optional(), args: z.record(z.string(), z.string()).default({}) }),
+    ]),
+  }),
   z.object({
     method: z.literal("agent.state"),
     params: z.object({ paneId: z.number().int(), state: z.enum(["working", "waiting", "done", "clear"]), detail: z.string().optional(), sessionId: z.string().min(1).optional(), reply: z.string().optional() }),

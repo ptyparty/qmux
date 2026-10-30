@@ -410,7 +410,9 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return { ok: true };
         }
         case "project.open": {
-          const error = workspace.openProject(request.params.target);
+          const { layout, args } = request.params;
+          const target = "target" in request.params ? request.params.target : { repo: request.params.repo };
+          const error = workspace.openProject(target, true, { layout, args });
           refresh();
           return error ? { ok: false, error } : { ok: true };
         }

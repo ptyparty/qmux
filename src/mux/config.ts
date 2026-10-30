@@ -13,7 +13,7 @@ export type TabsSpec = { tabs: PaneSpec[] };
 export type LayoutSpec = PaneSpec | SplitSpec | TabsSpec;
 export type JobSpec = { command: string[]; name?: string; dock: boolean };
 export type DrawerSpec = { command?: string[]; name?: string; height?: number };
-export type LayoutEntry = { jobs: JobSpec[]; drawer?: DrawerSpec; layout: LayoutSpec };
+export type LayoutEntry = { jobs: JobSpec[]; drawer?: DrawerSpec; args?: string[]; name?: string; layout: LayoutSpec };
 
 const paneSpec = z
   .object({
@@ -52,10 +52,21 @@ const layoutEntry: z.ZodType<LayoutEntry, unknown> = z
   .looseObject({
     jobs: z.array(jobSpec).default([]).describe("Jobs started out of sight with the tab and closed with it"),
     drawer: drawerSpec.optional().describe("What Alt d opens in the tab's drawer; started the first time it opens"),
+    args: z
+      .array(z.string().regex(/^\w[\w-]*$/, "args are names like \"pr\"").refine((arg) => arg !== "project", "project is always filled in; pick another name"))
+      .optional()
+      .describe("Values qmux project --arg must give, filled in wherever {name} appears in commands and the tab name"),
+    name: z.string().min(1).optional().describe("Tab name; {project} and {arg} are filled in. Defaults to the project's name"),
     services: z.undefined({ error: "services are now jobs: rename `services:` to `jobs:`" }).optional(),
   })
-  .transform(({ jobs, drawer, services: _services, ...layout }) => ({ jobs, ...(drawer ? { drawer } : {}), layout: layout as unknown }))
-  .pipe(z.object({ jobs: z.custom<JobSpec[]>(), drawer: z.custom<DrawerSpec>().optional(), layout: layoutSpec }));
+  .transform(({ jobs, drawer, args, name, services: _services, ...layout }) => ({
+    jobs,
+    ...(drawer ? { drawer } : {}),
+    ...(args ? { args } : {}),
+    ...(name ? { name } : {}),
+    layout: layout as unknown,
+  }))
+  .pipe(z.object({ jobs: z.custom<JobSpec[]>(), drawer: z.custom<DrawerSpec>().optional(), args: z.custom<string[]>().optional(), name: z.string().optional(), layout: layoutSpec }));
 
 export const configSchema = z
   .object({
@@ -83,18 +94,16 @@ export const configSchema = z
   })
   .strict()
   .superRefine((config, ctx) => {
-    if (config.projects.layout && !(config.projects.layout in config.layouts)) {
-      ctx.addIssue({ code: "custom", path: ["projects", "layout"], message: `no layout named ${config.projects.layout}` });
-    }
-    for (const [name, tab] of Object.entries(config.tabs)) {
-      if (!(tab.layout in config.layouts)) ctx.addIssue({ code: "custom", path: ["tabs", name, "layout"], message: `no layout named ${tab.layout}` });
-    }
+    const checkLayout = (layout: string, path: (string | number)[]) => {
+      if (!(layout in config.layouts)) ctx.addIssue({ code: "custom", path, message: `no layout named ${layout}` });
+      else if (config.layouts[layout]!.args?.length) ctx.addIssue({ code: "custom", path, message: `${layout} takes args, so only qmux project --layout can open it` });
+    };
+    if (config.projects.layout) checkLayout(config.projects.layout, ["projects", "layout"]);
+    for (const [name, tab] of Object.entries(config.tabs)) checkLayout(tab.layout, ["tabs", name, "layout"]);
     config.startup.forEach((name, index) => {
       if (!(name in config.tabs)) ctx.addIssue({ code: "custom", path: ["startup", index], message: `no tab named ${name}` });
     });
-    for (const [project, layout] of Object.entries(config.projects.layoutFor)) {
-      if (!(layout in config.layouts)) ctx.addIssue({ code: "custom", path: ["projects", "layoutFor", project], message: `no layout named ${layout}` });
-    }
+    for (const [project, layout] of Object.entries(config.projects.layoutFor)) checkLayout(layout, ["projects", "layoutFor", project]);
   });
 
 export type Config = z.infer<typeof configSchema>;
@@ -128,8 +137,45 @@ export function namedTabs(config: Config): Project[] {
 }
 
 export function projectLayout(config: Config, project: Project): LayoutEntry | undefined {
-  const name = project.layout ?? config.projects.layoutFor[project.name] ?? config.projects.layout;
+  const name = layoutName(config, project);
   return name === undefined ? undefined : config.layouts[name];
+}
+
+export type ProjectTab = { name: string; layout?: LayoutEntry };
+
+export function projectTab(config: Config, project: Project, args: Record<string, string> = {}): ProjectTab | { error: string } {
+  const layoutKey = layoutName(config, project);
+  const entry = layoutKey === undefined ? undefined : config.layouts[layoutKey];
+  if (layoutKey !== undefined && !entry) return { error: `No layout named ${layoutKey}` };
+  const declared = entry?.args ?? [];
+  const missing = declared.find((arg) => !(arg in args));
+  if (missing) return { error: `${layoutKey} needs --arg ${missing}=VALUE` };
+  const extra = Object.keys(args).find((arg) => !declared.includes(arg));
+  if (extra) return { error: layoutKey === undefined ? `${project.name} has no layout to take --arg ${extra}` : `${layoutKey} takes no ${extra} arg` };
+  const values = { ...args, project: project.name };
+  const fill = (text: string) => text.replace(/\{([\w-]+)\}/g, (match, key: string) => (Object.hasOwn(values, key) ? values[key as keyof typeof values]! : match));
+  if (!entry) return { name: project.name };
+  return { name: fill(entry.name ?? "{project}"), layout: fillLayout(entry, fill) };
+}
+
+function layoutName(config: Config, project: Project): string | undefined {
+  return project.layout ?? config.projects.layoutFor[project.name] ?? config.projects.layout;
+}
+
+function fillLayout(entry: LayoutEntry, fill: (text: string) => string): LayoutEntry {
+  const fillPane = <T extends { command?: string[]; name?: string }>(pane: T): T => ({ ...pane, ...(pane.command ? { command: pane.command.map(fill) } : {}), ...(pane.name ? { name: fill(pane.name) } : {}) });
+  const fillSpec = (spec: LayoutSpec): LayoutSpec => {
+    if ("tabs" in spec) return { tabs: spec.tabs.map(fillPane) };
+    if ("row" in spec) return { row: spec.row.map(fillSpec) };
+    if ("column" in spec) return { column: spec.column.map(fillSpec) };
+    return fillPane(spec);
+  };
+  return {
+    ...entry,
+    jobs: entry.jobs.map((job) => ({ ...job, command: job.command.map(fill), ...(job.name ? { name: fill(job.name) } : {}) })),
+    ...(entry.drawer ? { drawer: fillPane(entry.drawer) } : {}),
+    layout: fillSpec(entry.layout),
+  };
 }
 
 export function planLayout(spec: LayoutSpec, allocate: () => PaneId): { root: LayoutNode; panes: PlannedPane[]; focus: PaneId } {

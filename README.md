@@ -78,6 +78,8 @@ export default {
 ```
 
 - **Named tabs:** `tabs: { "q-space": { layout: "q-space", cwd: "~/work/flipstone/q-space" } }` defines a tab with its own layout and working directory. Named tabs appear first in the Ctrl+t o launcher and work with `qmux project`, so a closed one can be reopened, which also restarts its jobs.
+- **Args:** a layout with `args: ["pr"]` is opened by `qmux project --layout pr-review --arg pr=12`, which fills `{pr}` into its commands, job names, drawer, and tab `name`, along with `{project}`. `name: "{project} #{pr}"` gives each PR its own tab, so the same args switch back to it. Such a layout can't be a project's or named tab's default.
+- **Repos:** `qmux project --repo flipstone/q-space` opens the clone under `projects.roots` whose path ends in `flipstone/q-space`.
 - **Startup:** `startup: ["q-space"]` opens those named tabs when a session starts, instead of a plain tab.
 - **Shared directory:** every pane and job in a tab gets `QMUX_TAB_DIR`, a private directory for that tab. A job can put its socket there for the tab's panes to find.
 - **Without jobs:** Alt+Enter in the Ctrl+t o launcher opens a project without starting its layout's jobs. Ctrl+s s starts them later.

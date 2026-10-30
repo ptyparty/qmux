@@ -1,7 +1,7 @@
 import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, swapPanes, addPaneTab, type Axis, type Direction, type LayoutNode, type PaneId } from "./layout.ts";
-import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type DrawerSpec, type JobSpec, type LayoutEntry, type LayoutSpec } from "./config.ts";
+import { defaultConfig, namedTabs, planLayout, projectTab, type Config, type DrawerSpec, type JobSpec, type LayoutEntry, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
-import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
+import { expandHome, findRepo, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
 export type Drawer = { id: PaneId; height: number; open: boolean; zoomed: boolean };
 export type Tab = { id: number; name: string; root: LayoutNode; layoutFocus: PaneId; zoomed: boolean; layout: LayoutSpec; layoutJobs: JobSpec[]; layoutRuns: Map<number, PaneId>; cwd?: string; drawerSpec?: DrawerSpec; drawer?: Drawer };
@@ -105,7 +105,7 @@ export class Workspace {
     const startup = namedTabs(config).filter((tab) => config.startup.includes(tab.name));
     startup.sort((a, b) => config.startup.indexOf(a.name) - config.startup.indexOf(b.name));
     if (startup.length === 0) this.openTab(initialCwd);
-    for (const tab of startup) this.openTab(tab.dir, { name: tab.name, layout: projectLayout(config, tab) });
+    for (const tab of startup) this.showProject(tab);
     this.active = 0;
     this.selectFocusedTabs();
   }
@@ -589,12 +589,13 @@ export class Workspace {
     this.selectFocusedTabs();
   }
 
-  openProject(target: string, withJobs = true): string | undefined {
-    const project = resolveTarget(target.trim(), this.host.cwd(this.focused) ?? process.cwd(), this.projects());
-    if (!project) return `No project matches ${JSON.stringify(target.trim())}`;
-    this.showProject(project, withJobs);
+  openProject(target: string | { repo: string }, withJobs = true, choice: { layout?: string; args?: Record<string, string> } = {}): string | undefined {
+    const project =
+      typeof target === "string" ? resolveTarget(target.trim(), this.host.cwd(this.focused) ?? process.cwd(), this.projects()) : findRepo(target.repo, this.host.projects());
+    if (!project) return typeof target === "string" ? `No project matches ${JSON.stringify(target.trim())}` : `No clone of ${target.repo} under the project roots`;
+    const error = this.showProject(choice.layout ? { ...project, layout: choice.layout } : project, withJobs, choice.args);
     this.selectFocusedTabs();
-    return undefined;
+    return error;
   }
 
   private openProjects(projects: Project[], withJobs: boolean): void {
@@ -607,10 +608,13 @@ export class Workspace {
     this.selectFocusedTabs();
   }
 
-  private showProject(project: Project, withJobs = true): void {
-    const existing = this.tabs.findIndex((tab) => tab.name === project.name);
+  private showProject(project: Project, withJobs = true, args: Record<string, string> = {}): string | undefined {
+    const opened = projectTab(this.config, project, args);
+    if ("error" in opened) return opened.error;
+    const existing = this.tabs.findIndex((tab) => tab.name === opened.name);
     if (existing >= 0) this.active = existing;
-    else this.openTab(project.dir, { name: project.name, layout: projectLayout(this.config, project), withJobs });
+    else this.openTab(project.dir, { ...opened, withJobs });
+    return undefined;
   }
 
   openPaneNear(near: PaneId, placement: PanePlacement, command: string[], options: { name?: string; focus?: boolean } = {}): PaneId | undefined {

@@ -21,8 +21,10 @@ Usage:
       List running sessions.
   qmux kill NAME
       End a session and every program running in it.
-  qmux project NAME|PATH
+  qmux project NAME|PATH|--repo OWNER/REPO [--layout NAME] [--arg KEY=VALUE]...
       From inside a session, open a project in a new tab, or switch to its tab if it is open.
+      --repo finds the repo's clone under the project roots. --layout picks a layout, and
+      --arg fills in the args it declares.
   qmux pane open [--right|--below|--tab|--popup] [--name NAME] [--no-focus] [--width PCT] [--height PCT] -- COMMAND...
       From inside a session, open a pane running COMMAND beside this one, or over this tab with --popup.
       A popup closes when COMMAND succeeds; --width and --height size it. Prints the new pane's id.
@@ -242,14 +244,27 @@ async function wakeCommand(): Promise<void> {
 }
 
 async function projectCommand(args: string[]): Promise<void> {
-  const [target] = args;
-  if (!target) throw new UsageError("missing project name or path");
+  const { values, positionals } = parse(args, { repo: { type: "string" }, layout: { type: "string" }, arg: { type: "string", multiple: true } });
+  const [target, ...extra] = positionals;
+  if (extra.length > 0) throw new UsageError(`unexpected ${extra[0]}`);
+  if (target && values.repo) throw new UsageError("give a project name or --repo, not both");
+  if (!target && !values.repo) throw new UsageError("missing project name or path");
+  if (values.repo && !/^[^/\s]+\/[^/\s]+$/.test(values.repo)) throw new UsageError(`--repo must look like OWNER/REPO, got ${values.repo}`);
+  const layoutArgs = Object.fromEntries((values.arg ?? []).map(layoutArg));
   const socket = process.env.QMUX_SOCKET;
   if (!socket) throw new UsageError("qmux project works from inside a qmux session");
-  const response = await sendControl(socket, { method: "project.open", params: { target } }).catch((error: Error) => {
+  const choice = { ...(values.layout ? { layout: values.layout } : {}), args: layoutArgs };
+  const params = target ? { target, ...choice } : { repo: values.repo!, ...choice };
+  const response = await sendControl(socket, { method: "project.open", params }).catch((error: Error) => {
     throw new SessionError(error.message);
   });
   if (!response.ok) throw new SessionError(response.error);
+}
+
+function layoutArg(arg: string): [string, string] {
+  const split = arg.indexOf("=");
+  if (split <= 0) throw new UsageError(`--arg must look like KEY=VALUE, got ${arg}`);
+  return [arg.slice(0, split), arg.slice(split + 1)];
 }
 
 async function paneCommand(args: string[]): Promise<void> {

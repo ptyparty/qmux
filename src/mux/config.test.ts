@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultConfig, loadConfig, namedTabs, planLayout, projectLayout } from "./config.ts";
+import { defaultConfig, loadConfig, namedTabs, planLayout, projectLayout, projectTab } from "./config.ts";
 import { paneRects } from "./layout.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "qmux-config-"));
@@ -95,7 +95,34 @@ describe("config", () => {
     expect(config.layouts.ide).toEqual({ jobs: [], drawer: { command: ["lazygit"], name: "git", height: 50 }, layout: { row: [{}, {}] } });
   });
 
-  test("bad jobs and drawers, old services, and unknown project layouts are errors", async () => {
+  test("a layout can take args and name its tabs", async () => {
+    const path = writeConfig(
+      "args.ts",
+      `export default {
+        projects: { layout: "ide" },
+        layouts: {
+          ide: { name: "{project} ide", row: [{}] },
+          "pr-review": { args: ["pr"], name: "{project} #{pr}", row: [{ command: ["remax", "--pr", "{pr}", "{other}"], name: "pr {pr}" }] },
+        },
+      };`,
+    );
+    const { config, error } = await loadConfig(path);
+    expect(error).toBeUndefined();
+    expect(config.layouts["pr-review"]).toEqual({
+      jobs: [],
+      args: ["pr"],
+      name: "{project} #{pr}",
+      layout: { row: [{ command: ["remax", "--pr", "{pr}", "{other}"], name: "pr {pr}" }] },
+    });
+    expect(projectTab(config, { name: "penguin", dir: "/p" })).toEqual({ name: "penguin ide", layout: { jobs: [], name: "{project} ide", layout: { row: [{}] } } });
+    expect(projectTab(config, { name: "penguin", dir: "/p", layout: "pr-review" }, { pr: "12" })).toEqual({
+      name: "penguin #12",
+      layout: { jobs: [], args: ["pr"], name: "{project} #{pr}", layout: { row: [{ command: ["remax", "--pr", "12", "{other}"], name: "pr 12" }] } },
+    });
+    expect(projectTab(defaultConfig, { name: "penguin", dir: "/p" })).toEqual({ name: "penguin" });
+  });
+
+  test("bad jobs, drawers, and args, old services, and unknown project layouts are errors", async () => {
     for (const [name, source] of [
       ["empty-job.ts", `export default { layouts: { a: { jobs: [{ command: [] }], row: [{}] } } };`],
       ["job-key.ts", `export default { layouts: { a: { jobs: [{ command: ["x"], docked: true }], row: [{}] } } };`],
@@ -105,6 +132,9 @@ describe("config", () => {
       ["layout-for.ts", `export default { projects: { layoutFor: { "q-space": "nope" } } };`],
       ["tab-layout.ts", `export default { tabs: { q: { layout: "nope" } } };`],
       ["startup.ts", `export default { layouts: { a: { row: [{}] } }, tabs: { q: { layout: "a" } }, startup: ["nope"] };`],
+      ["arg-name.ts", `export default { layouts: { a: { args: ["project"], row: [{}] } } };`],
+      ["args-default.ts", `export default { projects: { layout: "a" }, layouts: { a: { args: ["pr"], row: [{}] } } };`],
+      ["args-tab.ts", `export default { layouts: { a: { args: ["pr"], row: [{}] } }, tabs: { q: { layout: "a" } } };`],
     ]) {
       const { config, error } = await loadConfig(writeConfig(name!, source!));
       expect(config).toEqual(defaultConfig);

@@ -505,13 +505,10 @@ export class Workspace {
     this.acknowledge(id);
   }
 
-  private replyToasts(): Reply[] {
-    return this.toasts().flatMap((toast) => (toast.kind === "reply" ? [toast.reply] : []));
-  }
-
-  private dismissReply(): void {
-    const oldest = this.replyToasts()[0];
-    if (oldest) oldest.unread = false;
+  private dismissToast(): void {
+    const toast = this.toasts()[0];
+    if (toast?.kind === "job") toast.job.seen = true;
+    if (toast?.kind === "reply") toast.reply.unread = false;
   }
 
   private acknowledge(id: PaneId): void {
@@ -544,7 +541,7 @@ export class Workspace {
     }
     if (popup && this.mode === "normal" && !passthrough.has(keyName(key))) return false;
     const binding = lookup(this.mode, key);
-    if (binding?.command.type === "dismiss-reply" && this.replyToasts().length === 0) return false;
+    if (binding?.command.type === "dismiss-toast" && this.toasts().length === 0) return false;
     if (binding) {
       this.run(binding.command);
       if (binding.then) this.mode = binding.then;
@@ -744,8 +741,8 @@ export class Workspace {
         return this.jumpToAttention();
       case "peek-reply":
         return this.peekReply();
-      case "dismiss-reply":
-        return this.dismissReply();
+      case "dismiss-toast":
+        return this.dismissToast();
       case "toggle-job": {
         const popup = this.popup;
         if (popup?.kind === "job") return this.popupExited(popup.id);

@@ -1057,6 +1057,20 @@ describe("Workspace", () => {
       expect(workspace.tabJobs()).toHaveLength(1);
     });
 
+    test("Alt x dismisses a failed job's toast and its tab badge", () => {
+      const clock = { now: 0 };
+      const { workspace } = ide(clock);
+      const id = workspace.runJob(2, ["false"], "build")!;
+      press(workspace, "ctrl+t", "c");
+      workspace.jobFinished(id, 2);
+      workspace.setAgentState(3, "done", "reply");
+      expect(workspace.toasts()).toMatchObject([{ kind: "job", job: { name: "build" } }, { kind: "reply" }]);
+      press(workspace, "alt+x");
+      expect(workspace.toasts()).toMatchObject([{ kind: "reply" }]);
+      expect(workspace.tabCommandState(workspace.tabs[0]!)).toBeUndefined();
+      expect(workspace.popup).toBeUndefined();
+    });
+
     test("a finished job's popup re-runs, moves into the layout, or closes", () => {
       const clock = { now: 0 };
       const { host, workspace } = ide(clock);
@@ -1255,7 +1269,7 @@ describe("Workspace", () => {
       expect(workspace.popup).toMatchObject({ id: newest, kind: "job" });
     });
 
-    test("Alt p switches to the reply's tab, and Alt x dismisses the oldest reply toast", () => {
+    test("Alt p switches to the reply's tab, and Alt x dismisses the top toast", () => {
       const clock = { now: 0 };
       const { host, workspace } = ide(clock);
       const merlin = workspace.tab;

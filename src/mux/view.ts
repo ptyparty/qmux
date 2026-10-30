@@ -265,7 +265,7 @@ export class MuxView {
         return { text: `💬 ${toast.tab.name} › ${name} · ${firstLine(toast.reply.text, 60)} · Alt p peek · Alt x dismiss`, color: theme.accent };
       }
       const { job } = toast;
-      const open = job.state === "failed" ? " · Alt a" : "";
+      const open = job.state === "failed" ? " · Alt a open · Alt x dismiss" : "";
       return { text: `${jobBadge(job)} ${toast.tab.name} › ${job.name} · ${jobDetail(job, Date.now())}${open}`, color: job.state === "failed" ? commandColors.failed : commandColors.succeeded };
     });
     this.toastText.content = styled(lines.flatMap((line, index) => [...(index > 0 ? ["\n"] : []), fg(line.color)(line.text)]));

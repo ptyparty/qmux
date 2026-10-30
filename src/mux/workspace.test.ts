@@ -795,6 +795,158 @@ describe("Workspace", () => {
     expect(press(workspace, "ctrl+n")).toEqual([false]);
     expect(workspace.mode).toBe("normal");
   });
+  describe("shell drawer", () => {
+    function split() {
+      const host = new FakeHost();
+      const workspace = new Workspace(host, "/home");
+      press(workspace, "ctrl+p", "d");
+      return { host, workspace };
+    }
+
+    test("Alt d opens a shell in the focused pane's directory, focused, and hides it again", () => {
+      const { host, workspace } = split();
+      press(workspace, "alt+d");
+      expect(host.created.at(-1)).toEqual([3, "/work/2"]);
+      expect(host.commands.get(3)).toBeUndefined();
+      expect(workspace.drawerOf()?.id).toBe(3);
+      expect(workspace.focused).toBe(3);
+      expect(workspace.tabPanes(workspace.tab)).toContain(3);
+      press(workspace, "alt+d");
+      expect(workspace.drawerOf()).toBeUndefined();
+      expect(workspace.focused).toBe(2);
+      press(workspace, "alt+d");
+      expect(host.created.length).toBe(3);
+      expect(workspace.focused).toBe(3);
+    });
+
+    test("a layout's drawer runs its command under its name at its height", () => {
+      const host = new FakeHost();
+      const config = configSchema.parse({ layouts: { ide: { drawer: { command: ["lazygit"], name: "git", height: 60 }, row: [{}, {}] } }, tabs: { work: { layout: "ide", cwd: "/work" } }, startup: ["work"] });
+      const workspace = new Workspace(host, "/home", config);
+      expect(host.created.length).toBe(2);
+      press(workspace, "alt+d");
+      expect(host.commands.get(3)).toEqual(["lazygit"]);
+      expect(workspace.paneNames.get(3)).toBe("git");
+      expect(workspace.drawerOf()?.height).toBe(60);
+    });
+
+    test("an exited drawer command is held: Enter re-runs it, Esc swaps in a shell, Ctrl+c closes it", () => {
+      const { host, workspace } = split();
+      press(workspace, "alt+d");
+      host.held.add(3);
+      expect(workspace.focusedPaneHeld()).toBe(true);
+      press(workspace, "return");
+      expect(host.reruns).toEqual([3]);
+      host.held.add(3);
+      press(workspace, "escape");
+      expect(host.shells).toEqual([3]);
+      host.held.add(3);
+      press(workspace, "ctrl+c");
+      expect(host.destroyed).toEqual([3]);
+      expect(workspace.tab.drawer).toBeUndefined();
+    });
+
+    test("Alt d focuses an open drawer before hiding it", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d", "alt+t");
+      expect(workspace.focused).toBe(2);
+      expect(workspace.drawerOf()).toBeDefined();
+      press(workspace, "alt+d");
+      expect(workspace.focused).toBe(3);
+      expect(workspace.drawerOf()).toBeDefined();
+    });
+
+    test("focus keys and pane cycling reach the drawer while it is shown", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d", "alt+t");
+      expect(workspace.focused).toBe(2);
+      press(workspace, "alt+n");
+      expect(workspace.focused).toBe(3);
+      press(workspace, "alt+h");
+      expect(workspace.focused).toBe(3);
+      press(workspace, "alt+e");
+      expect(workspace.focused).toBe(1);
+      press(workspace, "alt+o");
+      expect(workspace.focused).toBe(3);
+      press(workspace, "alt+o");
+      expect(workspace.focused).toBe(2);
+      press(workspace, "alt+t", "alt+t", "alt+d", "alt+d", "alt+e", "alt+e");
+      expect(workspace.focused).toBe(1);
+    });
+
+    test("pane mode zooms the drawer, and resize mode changes its height within bounds", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d", "ctrl+p", "f");
+      expect(workspace.drawerOf()?.zoomed).toBe(true);
+      expect(workspace.tab.zoomed).toBe(false);
+      press(workspace, "alt+d", "alt+d");
+      expect(workspace.drawerOf()?.zoomed).toBe(true);
+      press(workspace, "ctrl+p", "e", "up");
+      expect(workspace.mode).toBe("resize");
+      expect(workspace.drawerOf()).toMatchObject({ zoomed: false, height: 50 });
+      press(workspace, ...Array(8).fill("t"));
+      expect(workspace.drawerOf()?.height).toBe(80);
+      press(workspace, ...Array(8).fill("j"));
+      expect(workspace.drawerOf()?.height).toBe(20);
+      press(workspace, "escape");
+      expect(workspace.mode).toBe("normal");
+    });
+
+    test("resize mode needs an open drawer", () => {
+      const { workspace } = split();
+      press(workspace, "ctrl+p", "e");
+      expect(workspace.mode).toBe("normal");
+      expect(workspace.message).toBe("The drawer isn't open");
+    });
+
+    test("each tab keeps its own drawer", () => {
+      const { host, workspace } = split();
+      press(workspace, "alt+d", "ctrl+t", "c", "alt+d");
+      expect(workspace.drawerOf()?.id).toBe(5);
+      press(workspace, "ctrl+t", "h");
+      expect(workspace.drawerOf()?.id).toBe(3);
+      expect(host.created.map(([id]) => id)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    test("the drawer survives a layout restart and closes when its shell exits", () => {
+      const { host, workspace } = split();
+      press(workspace, "alt+d", "alt+t", "ctrl+t", "shift+r");
+      type(workspace, workspace.tab.name);
+      press(workspace, "return");
+      expect(host.destroyed).not.toContain(3);
+      expect(workspace.drawerOf()?.id).toBe(3);
+      press(workspace, "alt+d");
+      workspace.paneExited(3);
+      expect(workspace.tab.drawer).toBeUndefined();
+      expect(workspace.focused).toBe(workspace.tab.focused);
+      press(workspace, "alt+d");
+      expect(workspace.drawerOf()?.id).not.toBe(3);
+    });
+
+    test("closing the drawer from pane mode, or its tab, destroys its shell", () => {
+      const { host, workspace } = split();
+      press(workspace, "alt+d", "ctrl+p", "x");
+      expect(host.destroyed).toEqual([3]);
+      expect(workspace.tab.drawer).toBeUndefined();
+      expect(paneIds(workspace.tab.root)).toEqual([1, 2]);
+      press(workspace, "alt+d", "ctrl+t", "x");
+      type(workspace, workspace.tab.name);
+      press(workspace, "return");
+      expect(host.destroyed).toContain(4);
+    });
+
+    test("a click on a layout pane leaves the drawer, and focusing the drawer shows it", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d");
+      workspace.focusPane(1);
+      expect(workspace.focused).toBe(1);
+      press(workspace, "alt+d", "alt+d");
+      expect(workspace.drawerOf()).toBeUndefined();
+      workspace.focusPane(3);
+      expect(workspace.focused).toBe(3);
+    });
+  });
+
   describe("jobs", () => {
     function ide(clock: { now: number }, host = new FakeHost()) {
       const config = configSchema.parse({

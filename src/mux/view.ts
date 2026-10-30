@@ -29,6 +29,12 @@ export class MuxView {
   private readonly dock: TextRenderable;
   private dockJobs: PaneId[] = [];
   private overlayPane: PaneId | undefined;
+  private readonly drawerBox: BoxRenderable;
+  private readonly drawerSlider: BoxRenderable;
+  private drawerFrame: BoxRenderable | undefined;
+  private drawerShown: PaneId | undefined;
+  private drawerTab: number | undefined;
+  private slide: { direction: "in" | "out"; started: number; timer: Timer } | undefined;
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -77,7 +83,11 @@ export class MuxView {
       zIndex: 100,
       visible: false,
     });
+    this.drawerBox = new BoxRenderable(renderer, { position: "absolute", left: 0, width: "100%", zIndex: 90, visible: false, overflow: "hidden" });
+    this.drawerSlider = new BoxRenderable(renderer, { position: "absolute", left: 0, top: 0, width: "100%" });
+    this.drawerBox.add(this.drawerSlider);
     renderer.root.add(root);
+    renderer.root.add(this.drawerBox);
     renderer.root.add(this.overlay);
     this.toastBox = new BoxRenderable(renderer, {
       position: "absolute",
@@ -109,10 +119,11 @@ export class MuxView {
     const tab = this.workspace.tab;
     this.renderBody(tab.root, tab.zoomed ? tab.focused : undefined);
     const popup = this.renderOverlay();
+    const focused = this.workspace.focused;
     for (const id of paneIds(tab.root)) {
       const pane = this.panes.get(id);
       if (!pane) continue;
-      pane.show(this.paneTitle(id, pane), id === tab.focused && this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
+      pane.show(this.paneTitle(id, pane), id === focused && this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
     }
     this.renderPaneTabStrips();
     this.tabBar.content = this.renderTabs();
@@ -125,6 +136,91 @@ export class MuxView {
     this.jobsPanel.render(showJobs ? this.workspace.tabJobs() : undefined, this.workspace.selectedJob, Date.now());
     this.renderToasts();
     this.renderDock();
+    this.renderDrawer(popup);
+  }
+
+  private renderDrawer(popup: boolean): void {
+    const tabId = this.workspace.tab.id;
+    const drawer = this.workspace.drawerOf();
+    const pane = drawer && this.panes.get(drawer.id);
+    const shown = pane ? drawer.id : undefined;
+    if (shown !== this.drawerShown) {
+      const sameTab = this.drawerTab === tabId;
+      if (pane) {
+        this.attachDrawer(pane.frame);
+        this.startSlide(sameTab ? "in" : undefined);
+      } else if (sameTab && this.drawerFrame && !this.drawerFrame.isDestroyed) this.startSlide("out");
+      else this.detachDrawer();
+      this.drawerShown = shown;
+    }
+    this.drawerTab = tabId;
+    if (!pane) return;
+    const below = (this.dock.visible ? this.dockJobs.length : 0) + 2;
+    const room = Math.max(this.renderer.height - below - 1, 3);
+    const height = drawer.zoomed ? room : Math.max(Math.round((room * drawer.height) / 100), 3);
+    this.drawerBox.height = height;
+    this.drawerSlider.height = height;
+    this.drawerBox.top = 1 + room - height;
+    this.drawerBox.visible = true;
+    this.placeSlider();
+    const zoomed = drawer.zoomed ? " (zoomed)" : "";
+    pane.show(`${this.paneTitle(drawer.id, pane)} · drawer${zoomed}`, drawer.focused && this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
+  }
+
+  private attachDrawer(frame: BoxRenderable): void {
+    if (this.drawerFrame === frame) return;
+    this.detachDrawer();
+    this.drawerSlider.add(frame);
+    this.drawerFrame = frame;
+  }
+
+  private detachDrawer(): void {
+    this.stopSlide();
+    if (this.drawerFrame?.parent === this.drawerSlider) this.drawerSlider.remove(this.drawerFrame);
+    this.drawerFrame = undefined;
+    this.drawerBox.visible = false;
+  }
+
+  private startSlide(direction: "in" | "out" | undefined): void {
+    this.stopSlide();
+    if (!direction) {
+      this.placeSlider();
+      return;
+    }
+    this.renderer.requestLive();
+    const tick = () => {
+      if (!this.slide) return;
+      if (this.placeSlider()) {
+        this.slide.timer = setTimeout(tick, slideFrameMs);
+        return;
+      }
+      const finished = this.slide.direction;
+      this.stopSlide();
+      if (finished === "out") this.detachDrawer();
+    };
+    this.slide = { direction, started: Date.now(), timer: setTimeout(tick, slideFrameMs) };
+    this.placeSlider();
+  }
+
+  private stopSlide(): void {
+    if (!this.slide) return;
+    clearTimeout(this.slide.timer);
+    this.slide = undefined;
+    this.renderer.dropLive();
+  }
+
+  private placeSlider(): boolean {
+    const height = typeof this.drawerSlider.height === "number" ? this.drawerSlider.height : 0;
+    if (!this.slide) {
+      this.drawerSlider.top = 0;
+      return false;
+    }
+    const progress = Math.min((Date.now() - this.slide.started) / slideMs, 1);
+    const eased = 1 - (1 - progress) ** 3;
+    const hidden = this.slide.direction === "in" ? 1 - eased : eased;
+    this.drawerSlider.top = Math.round(height * hidden);
+    this.renderer.requestRender();
+    return progress < 1;
   }
 
   private renderDock(): void {
@@ -247,7 +343,7 @@ export class MuxView {
     const focused = this.workspace.tab.focused;
     for (const entry of this.paneTabStrips) {
       const selected = shownPaneTab(entry.group, focused);
-      const groupFocused = entry.group.panes.includes(focused) && !this.workspace.prompt && !this.workspace.popup;
+      const groupFocused = entry.group.panes.includes(this.workspace.focused) && !this.workspace.prompt && !this.workspace.popup;
       const parts: Part[] = [" "];
       let column = 1;
       entry.ranges = [];
@@ -391,6 +487,8 @@ function modeFocusColor(mode: Mode): string {
 }
 
 const toastBottom = 3;
+const slideMs = 90;
+const slideFrameMs = 15;
 const defaultPopupSize = { width: 80, height: 80 };
 const agentBadges: Record<AgentState, string> = { working: "🧠", waiting: "!", done: "🚀", failed: "✗" };
 const agentLabels: Record<AgentState, string> = { working: "working", waiting: "needs you", done: "done", failed: "failed" };

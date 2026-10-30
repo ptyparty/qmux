@@ -1,9 +1,10 @@
-import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, swapPanes, addPaneTab, type Axis, type LayoutNode, type PaneId } from "./layout.ts";
-import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type JobSpec, type LayoutEntry, type LayoutSpec } from "./config.ts";
+import { addToFirstTabs, inPaneTabs, selectPaneTab, leaf, neighbor, paneIds, paneRects, paneTabSibling, removePane, splitPane, swapPanes, addPaneTab, type Axis, type Direction, type LayoutNode, type PaneId } from "./layout.ts";
+import { defaultConfig, namedTabs, planLayout, projectLayout, type Config, type DrawerSpec, type JobSpec, type LayoutEntry, type LayoutSpec } from "./config.ts";
 import { keyName, lookup, type Command, type Key, type Mode } from "./keymap.ts";
 import { expandHome, looksLikePath, rankProjects, resolveTarget, type Project } from "./projects.ts";
 
-export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean; layout: LayoutSpec; layoutJobs: JobSpec[]; layoutRuns: Map<number, PaneId>; cwd?: string };
+export type Drawer = { id: PaneId; height: number; open: boolean; focused: boolean; zoomed: boolean };
+export type Tab = { id: number; name: string; root: LayoutNode; focused: PaneId; zoomed: boolean; layout: LayoutSpec; layoutJobs: JobSpec[]; layoutRuns: Map<number, PaneId>; cwd?: string; drawerSpec?: DrawerSpec; drawer?: Drawer };
 
 export type PopupSize = { width: number; height: number };
 export type Popup = { id: PaneId; title: string; tabId: number; kind: "ask" | "view" | "job"; askingPane?: PaneId; size?: PopupSize; hidden?: boolean };
@@ -23,6 +24,7 @@ const commandUrgency: Record<CommandState, number> = { failed: 3, succeeded: 2, 
 const popupDelayMs = 1500;
 const toastMs = 5000;
 const keptFinishedJobs = 5;
+const drawerHeights = { initial: 40, step: 10, min: 20, max: 80 };
 
 export type Prompt = {
   kind: "rename-tab" | "rename-pane" | "close-tab" | "restart-tab" | "open-project" | "run-job";
@@ -112,6 +114,14 @@ export class Workspace {
     return this.tabs[this.active]!;
   }
 
+  get focused(): PaneId {
+    return focusedPane(this.tab);
+  }
+
+  drawerOf(tab: Tab = this.tab): Drawer | undefined {
+    return tab.drawer?.open ? tab.drawer : undefined;
+  }
+
   get popup(): Popup | undefined {
     const view = this.popups.find((candidate) => candidate.tabId === this.tab.id && candidate.kind !== "ask");
     if (view) return view;
@@ -145,7 +155,7 @@ export class Workspace {
   }
 
   tabPanes(tab: Tab): PaneId[] {
-    return [...paneIds(tab.root), ...this.tabJobs(tab).map((job) => job.id)];
+    return [...paneIds(tab.root), ...(tab.drawer ? [tab.drawer.id] : []), ...this.tabJobs(tab).map((job) => job.id)];
   }
 
   tabOf(id: PaneId | undefined): Tab | undefined {
@@ -199,7 +209,7 @@ export class Workspace {
     }
     this.markAgent(id);
     if (state === "working" && this.hideOnReply.has(id)) this.popupExited(id);
-    const watching = id === this.tab.focused || this.popup?.id === id;
+    const watching = id === this.focused || this.popup?.id === id;
     if (reply !== undefined) {
       this.replies.delete(id);
       this.replies.set(id, { text: reply, at: this.now(), unread: !watching });
@@ -349,11 +359,16 @@ export class Workspace {
     this.paneNames.set(job.id, name);
     tab.root = this.placeNew(tab, job.id, undefined);
     Object.assign(tab, { focused: job.id, zoomed: false });
+    this.leaveDrawer(tab);
     this.active = index;
   }
 
   private backgroundPane(): void {
     const tab = this.tab;
+    if (this.drawerOf(tab)?.focused) {
+      this.message = "The drawer can't go to the background";
+      return;
+    }
     const id = tab.focused;
     const running = this.host.runningCommand(id);
     if (running === undefined) {
@@ -448,8 +463,11 @@ export class Workspace {
 
   private goToAgent(entry: { index: number; id: PaneId }): void {
     this.active = entry.index;
-    if (!this.jobStatus(entry.id)) this.tab.focused = entry.id;
-    else {
+    if (entry.id === this.tab.drawer?.id) this.showDrawer(this.tab);
+    else if (!this.jobStatus(entry.id)) {
+      this.tab.focused = entry.id;
+      this.leaveDrawer(this.tab);
+    } else {
       this.openJob(entry.id);
       if (this.jobStatus(entry.id)?.agent) this.hideOnReply.add(entry.id);
     }
@@ -459,10 +477,10 @@ export class Workspace {
   private dispatchKey(key: InputKey): boolean {
     this.message = undefined;
     const consumed = this.routeKey(key);
-    const shown = this.peeking ? undefined : this.popup?.kind === "job" ? this.popup.id : this.popup ? undefined : this.tabs[this.active]?.focused;
+    const shown = this.peeking ? undefined : this.popup?.kind === "job" ? this.popup.id : this.popup ? undefined : this.tabs.length > 0 ? this.focused : undefined;
     this.peeking = false;
     if (shown !== undefined) this.seeReply(shown);
-    if (!consumed && !this.popup) this.acknowledge(this.tab.focused);
+    if (!consumed && !this.popup) this.acknowledge(this.focused);
     else if (!consumed && this.popup?.kind === "job") this.acknowledge(this.popup.id);
     return consumed;
   }
@@ -471,7 +489,7 @@ export class Workspace {
     const replies = [...this.replies].filter(([id]) => this.tabOf(id));
     const newest = (candidates: typeof replies) => candidates.sort(([, a], [, b]) => b.at - a.at)[0];
     const target =
-      replies.find(([id]) => id === this.tab.focused) ??
+      replies.find(([id]) => id === this.focused) ??
       newest(replies.filter(([, reply]) => reply.unread)) ??
       newest(replies.filter(([id]) => this.tabOf(id) === this.tab));
     if (!target) {
@@ -534,25 +552,25 @@ export class Workspace {
     const binding = lookup(this.mode, key);
     if (binding?.command.type === "dismiss-reply" && this.replyToasts().length === 0) return false;
     if (binding) {
-      const before = `${this.active}:${this.tab.focused}`;
+      const before = `${this.active}:${this.focused}`;
       const mode = this.mode;
       this.run(binding.command);
       if (binding.then) this.mode = binding.then;
-      if (mode === "normal" && this.tabs.length > 0 && before !== `${this.active}:${this.tab.focused}` && !this.message) {
+      if (mode === "normal" && this.tabs.length > 0 && before !== `${this.active}:${this.focused}` && !this.message) {
         this.message = `Focus moved by ${keyLabel(keyName(key))}`;
       }
       return true;
     }
-    if ((this.mode === "normal" || this.mode === "locked") && this.host.isHeld(this.tab.focused)) return this.heldKey(key);
+    if ((this.mode === "normal" || this.mode === "locked") && this.host.isHeld(this.focused)) return this.heldKey(key);
     return this.mode !== "normal" && this.mode !== "locked";
   }
 
   focusedPaneHeld(): boolean {
-    return !this.popup && !this.prompt && this.host.isHeld(this.tab.focused);
+    return !this.popup && !this.prompt && this.host.isHeld(this.focused);
   }
 
   private heldKey(key: InputKey): boolean {
-    const id = this.tab.focused;
+    const id = this.focused;
     switch (keyName(key)) {
       case "return":
         this.host.rerun(id);
@@ -569,10 +587,18 @@ export class Workspace {
   }
 
   focusPane(id: PaneId): void {
+    const drawer = this.tabs.findIndex((tab) => tab.drawer?.id === id);
+    if (drawer >= 0) {
+      this.active = drawer;
+      this.showDrawer(this.tab);
+      this.seeReply(id);
+      return this.selectFocusedTabs();
+    }
     const index = this.tabs.findIndex((tab) => paneIds(tab.root).includes(id));
     if (index < 0) return;
     this.active = index;
     this.tab.focused = id;
+    this.leaveDrawer(this.tab);
     this.seeReply(id);
     this.selectFocusedTabs();
   }
@@ -613,6 +639,7 @@ export class Workspace {
     if (options.focus ?? true) {
       this.active = index;
       tab.focused = id;
+      this.leaveDrawer(tab);
     }
     this.selectFocusedTabs();
     return id;
@@ -629,6 +656,11 @@ export class Workspace {
     if (job) {
       this.forgetJob(id);
       if (job.state === "running") this.message = `${job.name} ended`;
+      return;
+    }
+    const owner = this.tabs.find((tab) => tab.drawer?.id === id);
+    if (owner) {
+      this.forgetDrawer(owner);
       return;
     }
     const index = this.tabs.findIndex((tab) => paneIds(tab.root).includes(id));
@@ -655,21 +687,30 @@ export class Workspace {
           this.mode = "normal";
           return;
         }
+        if (command.mode === "resize" && !this.drawerOf()) {
+          this.message = "The drawer isn't open";
+          this.mode = "normal";
+          return;
+        }
         this.mode = command.mode;
         return;
-      case "focus": {
-        const target = neighbor(this.tab.root, this.tab.focused, command.direction);
-        if (target !== undefined) Object.assign(this.tab, { focused: target, zoomed: false });
-        return;
-      }
+      case "focus":
+        return this.moveFocus(command.direction);
       case "swap-pane": {
+        if (this.drawerOf()?.focused) return;
         const target = neighbor(this.tab.root, this.tab.focused, command.direction);
         if (target !== undefined) Object.assign(this.tab, { root: swapPanes(this.tab.root, this.tab.focused, target), zoomed: false });
         return;
       }
       case "cycle-pane": {
-        const ids = paneIds(this.tab.root);
-        this.tab.focused = ids[wrap(ids.indexOf(this.tab.focused) + command.delta, ids.length)]!;
+        const drawer = this.drawerOf();
+        const ids = [...paneIds(this.tab.root), ...(drawer ? [drawer.id] : [])];
+        const target = ids[wrap(ids.indexOf(this.focused) + command.delta, ids.length)]!;
+        if (target === drawer?.id) drawer.focused = true;
+        else {
+          this.tab.focused = target;
+          this.leaveDrawer(this.tab);
+        }
         return;
       }
       case "new-pane":
@@ -677,18 +718,21 @@ export class Workspace {
       case "tab-pane":
         return this.addPane((root, focused, id) => addPaneTab(root, focused, id));
       case "close-pane": {
-        const id = this.tab.focused;
+        const id = this.focused;
         this.host.destroy(id);
         return this.paneExited(id);
       }
-      case "zoom":
-        this.tab.zoomed = !this.tab.zoomed;
+      case "zoom": {
+        const drawer = this.drawerOf();
+        if (drawer?.focused) drawer.zoomed = !drawer.zoomed;
+        else this.tab.zoomed = !this.tab.zoomed;
         return;
+      }
       case "rename-pane":
-        this.prompt = { kind: "rename-pane", title: "Rename pane", text: this.paneNames.get(this.tab.focused) ?? "", selected: 0 };
+        this.prompt = { kind: "rename-pane", title: "Rename pane", text: this.paneNames.get(this.focused) ?? "", selected: 0 };
         return;
       case "new-tab":
-        return this.openTab(this.config.defaultCwd ? expandHome(this.config.defaultCwd) : this.host.cwd(this.tab.focused));
+        return this.openTab(this.config.defaultCwd ? expandHome(this.config.defaultCwd) : this.host.cwd(this.focused));
       case "open-project": {
         const candidates = this.projects();
         this.prompt = { kind: "open-project", title: "Open project", text: "", candidates, matches: candidates, marked: [], selected: 0 };
@@ -744,8 +788,17 @@ export class Workspace {
         this.message = "No job or question to reopen";
         return;
       }
+      case "toggle-drawer":
+        return this.toggleDrawer();
+      case "resize-drawer": {
+        const drawer = this.drawerOf();
+        if (!drawer) return;
+        drawer.zoomed = false;
+        drawer.height = Math.min(Math.max(drawer.height + command.delta * drawerHeights.step, drawerHeights.min), drawerHeights.max);
+        return;
+      }
       case "compose-claude":
-        this.message = this.host.composeClaude(this.tab.focused, this.tabPanes(this.tab));
+        this.message = this.host.composeClaude(this.focused, this.tabPanes(this.tab));
         return;
       case "last-tab": {
         const index = this.tabs.findIndex((tab) => tab.id === this.previousTabId);
@@ -795,6 +848,60 @@ export class Workspace {
     }
   }
 
+  private moveFocus(direction: Direction): void {
+    const tab = this.tab;
+    const drawer = this.drawerOf(tab);
+    if (drawer?.focused) {
+      if (direction === "up") this.leaveDrawer(tab);
+      return;
+    }
+    const target = neighbor(tab.root, tab.focused, direction);
+    if (target !== undefined) Object.assign(tab, { focused: target, zoomed: false });
+    else if (direction === "down" && drawer) drawer.focused = true;
+  }
+
+  private toggleDrawer(): void {
+    const tab = this.tab;
+    const drawer = this.drawerOf(tab);
+    if (drawer?.focused) {
+      Object.assign(drawer, { open: false, focused: false });
+      if (this.mode === "resize") this.mode = "normal";
+      return;
+    }
+    if (!tab.drawer) {
+      const id = this.nextPaneId++;
+      const spec = tab.drawerSpec ?? {};
+      tab.drawer = { id, height: spec.height ?? drawerHeights.initial, open: true, focused: true, zoomed: false };
+      if (spec.name) this.paneNames.set(id, spec.name);
+      this.host.create(id, this.host.cwd(tab.focused) ?? tab.cwd, spec.command, tab.id);
+      return;
+    }
+    this.showDrawer(tab);
+  }
+
+  private showDrawer(tab: Tab): void {
+    if (!tab.drawer) return;
+    Object.assign(tab.drawer, { open: true, focused: true });
+  }
+
+  private leaveDrawer(tab: Tab): void {
+    if (!tab.drawer?.focused) return;
+    Object.assign(tab.drawer, { focused: false, zoomed: false });
+    if (this.mode === "resize") this.mode = "normal";
+  }
+
+  private forgetDrawer(tab: Tab): void {
+    const id = tab.drawer!.id;
+    tab.drawer = undefined;
+    this.paneNames.delete(id);
+    this.agents.delete(id);
+    this.replies.delete(id);
+    this.commands.delete(id);
+    this.activities.delete(id);
+    this.modes.delete(id);
+    if (this.mode === "resize" && tab === this.tab) this.mode = "normal";
+  }
+
   private newPane(axis: Axis | undefined): void {
     this.addPane((_root, _focused, id) => this.placeNew(this.tab, id, axis));
   }
@@ -809,9 +916,10 @@ export class Workspace {
     const tab = this.tab;
     const id = this.nextPaneId++;
     tab.root = place(tab.root, tab.focused, id);
-    const cwd = this.host.cwd(tab.focused);
+    const cwd = this.host.cwd(this.focused);
     tab.focused = id;
     tab.zoomed = false;
+    this.leaveDrawer(tab);
     this.host.create(id, cwd, undefined, tab.id);
   }
 
@@ -824,7 +932,7 @@ export class Workspace {
   private openTab(cwd: string | undefined, options: { name?: string; layout?: LayoutEntry; withJobs?: boolean } = {}): void {
     const number = this.nextTabNumber++;
     const layout = options.layout?.layout ?? {};
-    const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: leaf(0), focused: 0, zoomed: false, layout, layoutJobs: options.layout?.jobs ?? [], layoutRuns: new Map(), cwd };
+    const tab: Tab = { id: number, name: options.name ?? `Tab #${number}`, root: leaf(0), focused: 0, zoomed: false, layout, layoutJobs: options.layout?.jobs ?? [], layoutRuns: new Map(), cwd, drawerSpec: options.layout?.drawer };
     this.tabs.splice(this.tabs.length === 0 ? 0 : this.active + 1, 0, tab);
     this.active = this.tabs.length === 1 ? 0 : this.active + 1;
     this.createLayoutPanes(tab);
@@ -890,7 +998,12 @@ export class Workspace {
   }
 
   private removeTab(index: number): void {
-    for (const job of this.tabJobs(this.tabs[index])) this.closeJob(job.id);
+    const tab = this.tabs[index]!;
+    for (const job of this.tabJobs(tab)) this.closeJob(job.id);
+    if (tab.drawer) {
+      this.host.destroy(tab.drawer.id);
+      this.forgetDrawer(tab);
+    }
     const [removed] = this.tabs.splice(index, 1);
     this.host.tabClosed(removed!.id);
     if (this.tabs.length === 0) {
@@ -957,11 +1070,11 @@ export class Workspace {
         if (text) this.tab.name = text;
         return;
       case "rename-pane":
-        if (text) this.paneNames.set(this.tab.focused, text);
-        else this.paneNames.delete(this.tab.focused);
+        if (text) this.paneNames.set(this.focused, text);
+        else this.paneNames.delete(this.focused);
         return;
       case "run-job":
-        if (text) this.runJob(this.tab.focused, this.host.shellCommand(text), text);
+        if (text) this.runJob(this.focused, this.host.shellCommand(text), text);
         return;
       case "close-tab":
         if (prompt.text === this.tab.name) return this.closeTab();
@@ -979,6 +1092,10 @@ export class Workspace {
       }
     }
   }
+}
+
+function focusedPane(tab: Tab): PaneId {
+  return tab.drawer?.open && tab.drawer.focused ? tab.drawer.id : tab.focused;
 }
 
 function keyLabel(name: string): string {

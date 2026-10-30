@@ -1,6 +1,6 @@
 import type { Axis, Direction } from "./layout.ts";
 
-export type Mode = "normal" | "locked" | "pane" | "tab" | "session" | "tray" | "jobs";
+export type Mode = "normal" | "locked" | "pane" | "tab" | "session" | "tray" | "jobs" | "resize";
 
 export type Command =
   | { type: "mode"; mode: Mode }
@@ -27,6 +27,8 @@ export type Command =
   | { type: "peek-reply" }
   | { type: "dismiss-reply" }
   | { type: "toggle-job" }
+  | { type: "toggle-drawer" }
+  | { type: "resize-drawer"; delta: number }
   | { type: "dock-job" }
   | { type: "start-layout-jobs" }
   | { type: "last-tab" }
@@ -83,6 +85,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["alt+p"], command: { type: "peek-reply" } },
       { keys: ["alt+x"], command: { type: "dismiss-reply" } },
       { keys: ["alt+j"], command: { type: "toggle-job" } },
+      { keys: ["alt+d"], command: { type: "toggle-drawer" } },
     ],
     hints: [
       { keys: "Alt h/t/n/s", description: "focus" },
@@ -91,6 +94,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "Alt c", description: "message Claude" },
       { keys: "Alt p", description: "peek at a reply" },
       { keys: "Alt j", description: "hide or reopen a job or question" },
+      { keys: "Alt d", description: "shell drawer" },
     ],
   },
   locked: {
@@ -109,6 +113,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: ["x"], command: { type: "close-pane" }, then: "normal" },
       { keys: ["f"], command: { type: "zoom" }, then: "normal" },
       { keys: ["c"], command: { type: "rename-pane" }, then: "normal" },
+      { keys: ["e"], command: { type: "mode", mode: "resize" } },
       backToNormal,
     ],
     hints: [
@@ -121,6 +126,7 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "x", description: "close" },
       { keys: "f", description: "zoom" },
       { keys: "c", description: "rename" },
+      { keys: "e", description: "resize drawer" },
       backHint,
     ],
   },
@@ -191,6 +197,14 @@ export const keymap: Record<Mode, ModeKeys> = {
       { keys: "x", description: "close" },
       backHint,
     ],
+  },
+  resize: {
+    bindings: [
+      { keys: ["up", "k", "t"], command: { type: "resize-drawer", delta: 1 } },
+      { keys: ["down", "j", "n"], command: { type: "resize-drawer", delta: -1 } },
+      backToNormal,
+    ],
+    hints: [{ keys: "↑/k/t", description: "taller" }, { keys: "↓/j/n", description: "shorter" }, backHint],
   },
   session: {
     bindings: [

@@ -14,5 +14,6 @@ export const theme = {
     session: "#e6c384",
     tray: "#7fb4ca",
     jobs: "#d27e99",
+    resize: "#957fb8",
   },
 } as const;

@@ -85,6 +85,23 @@ export default {
 
 From inside a pane, `qmux pane open [--right|--below|--tab] [--name NAME] [--no-focus] -- COMMAND...` opens a pane beside it in the same tab and prints the new pane's id. With `--popup` (and optionally `--width`/`--height` in percent), the command opens over the tab at once and takes the keys. The popup closes when the command exits successfully. After a failure it stays up until the next key, so the error can be read.
 
+## The drawer
+
+**Alt d** slides a shell up over the bottom of the tab, full width, above the mode row. Each tab has its own drawer, started in the focused pane's directory the first time it opens. Hiding it leaves the shell running, so Alt d brings it back with its scrollback. If the drawer is open but focus is above it, Alt d focuses it; once it has focus, Alt d hides it.
+
+- **A pane while shown:** Alt h/t/n/s move between the drawer and the pane above it, and Alt o/e cycle through it after the layout's panes. Pane mode works on it: **f** fills the screen with it, **x** closes it, **c** renames it.
+- **Height:** pane mode **e** enters resize mode, where ↑/k/t make it taller and ↓/j/n shorter, from 20% to 80% of the screen.
+- **Popups:** questions, jobs, and peeks open over the drawer and take the keys until they close.
+- **Exits:** a shell that exits closes the drawer, and the next Alt d starts a new one.
+
+A layout can put something other than a shell in its tabs' drawers. Like any layout pane, a command that exits is held until Enter re-runs it, Esc swaps in a shell, or Ctrl+c closes it:
+
+```ts
+layouts: {
+  ide: { drawer: { command: ["lazygit"], name: "git", height: 50 }, row: [{}, {}] },
+},
+```
+
 ## Jobs
 
 A job is a command that runs out of sight in a tab, in a terminal of its own. Press Ctrl+s for jobs mode, which lists the tab's jobs:

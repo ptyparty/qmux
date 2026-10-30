@@ -12,7 +12,8 @@ export type SplitSpec = { row: LayoutSpec[] } | { column: LayoutSpec[] };
 export type TabsSpec = { tabs: PaneSpec[] };
 export type LayoutSpec = PaneSpec | SplitSpec | TabsSpec;
 export type JobSpec = { command: string[]; name?: string; dock: boolean };
-export type LayoutEntry = { jobs: JobSpec[]; layout: LayoutSpec };
+export type DrawerSpec = { command?: string[]; name?: string; height?: number };
+export type LayoutEntry = { jobs: JobSpec[]; drawer?: DrawerSpec; layout: LayoutSpec };
 
 const paneSpec = z
   .object({
@@ -39,13 +40,22 @@ const jobSpec = z
   })
   .strict();
 
+const drawerSpec = z
+  .object({
+    command: z.array(z.string()).min(1).optional().describe("Program and arguments; defaults to $SHELL"),
+    name: z.string().optional(),
+    height: z.number().int().min(20).max(80).optional().describe("Starting height as a percentage of the screen; defaults to 40"),
+  })
+  .strict();
+
 const layoutEntry: z.ZodType<LayoutEntry, unknown> = z
   .looseObject({
     jobs: z.array(jobSpec).default([]).describe("Jobs started out of sight with the tab and closed with it"),
+    drawer: drawerSpec.optional().describe("What Alt d opens in the tab's drawer; started the first time it opens"),
     services: z.undefined({ error: "services are now jobs: rename `services:` to `jobs:`" }).optional(),
   })
-  .transform(({ jobs, services: _services, ...layout }) => ({ jobs, layout: layout as unknown }))
-  .pipe(z.object({ jobs: z.custom<JobSpec[]>(), layout: layoutSpec }));
+  .transform(({ jobs, drawer, services: _services, ...layout }) => ({ jobs, ...(drawer ? { drawer } : {}), layout: layout as unknown }))
+  .pipe(z.object({ jobs: z.custom<JobSpec[]>(), drawer: z.custom<DrawerSpec>().optional(), layout: layoutSpec }));
 
 export const configSchema = z
   .object({

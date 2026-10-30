@@ -88,10 +88,19 @@ describe("config", () => {
     ]);
   });
 
-  test("bad jobs, old services and unknown project layouts are errors", async () => {
+  test("a layout can say what its drawer runs", async () => {
+    const path = writeConfig("drawer.ts", `export default { layouts: { ide: { drawer: { command: ["lazygit"], name: "git", height: 50 }, row: [{}, {}] } } };`);
+    const { config, error } = await loadConfig(path);
+    expect(error).toBeUndefined();
+    expect(config.layouts.ide).toEqual({ jobs: [], drawer: { command: ["lazygit"], name: "git", height: 50 }, layout: { row: [{}, {}] } });
+  });
+
+  test("bad jobs and drawers, old services, and unknown project layouts are errors", async () => {
     for (const [name, source] of [
       ["empty-job.ts", `export default { layouts: { a: { jobs: [{ command: [] }], row: [{}] } } };`],
       ["job-key.ts", `export default { layouts: { a: { jobs: [{ command: ["x"], docked: true }], row: [{}] } } };`],
+      ["drawer-height.ts", `export default { layouts: { a: { drawer: { height: 95 }, row: [{}] } } };`],
+      ["drawer-key.ts", `export default { layouts: { a: { drawer: { cmd: ["x"] }, row: [{}] } } };`],
       ["old-services.ts", `export default { layouts: { a: { services: [{ command: ["x"] }], row: [{}] } } };`],
       ["layout-for.ts", `export default { projects: { layoutFor: { "q-space": "nope" } } };`],
       ["tab-layout.ts", `export default { tabs: { q: { layout: "nope" } } };`],

@@ -135,22 +135,21 @@ describe("Workspace", () => {
     press(workspace, "ctrl+p", "r");
     expect(workspace.mode).toBe("normal");
     expect(paneIds(workspace.tab.root)).toEqual([1, 2]);
-    expect(workspace.tab.focused).toBe(2);
+    expect(workspace.focused).toBe(2);
     expect(host.created.at(-1)).toEqual([2, "/work/1"]);
     press(workspace, "alt+h");
-    expect(workspace.tab.focused).toBe(1);
-    expect(workspace.message).toBe("Focus moved by Alt+h");
+    expect(workspace.focused).toBe(1);
     press(workspace, "alt+s");
-    expect(workspace.tab.focused).toBe(2);
+    expect(workspace.focused).toBe(2);
     press(workspace, "alt+o");
-    expect(workspace.tab.focused).toBe(1);
+    expect(workspace.focused).toBe(1);
   });
 
   test("pane mode moves the focused pane with the focus keys", () => {
     const workspace = new Workspace(new FakeHost());
     press(workspace, "ctrl+p", "r", "ctrl+p", "alt+h");
     expect(paneIds(workspace.tab.root)).toEqual([2, 1]);
-    expect([workspace.tab.focused, workspace.mode]).toEqual([2, "pane"]);
+    expect([workspace.focused, workspace.mode]).toEqual([2, "pane"]);
     press(workspace, "alt+right");
     expect(paneIds(workspace.tab.root)).toEqual([1, 2]);
     press(workspace, "alt+s");
@@ -188,7 +187,7 @@ describe("Workspace", () => {
     press(workspace, "ctrl+p", "d");
     workspace.paneExited(2);
     expect(paneIds(workspace.tab.root)).toEqual([1]);
-    expect(workspace.tab.focused).toBe(1);
+    expect(workspace.focused).toBe(1);
   });
 
   test("tab mode creates, cycles, moves, and jumps between tabs", () => {
@@ -341,7 +340,7 @@ describe("Workspace", () => {
     press(workspace, "return");
     expect(workspace.tabs.map((tab) => tab.name)).toEqual(["Tab #1", "penguin"]);
     expect(paneIds(workspace.tab.root)).toEqual([2, 3, 4]);
-    expect(workspace.tab.focused).toBe(2);
+    expect(workspace.focused).toBe(2);
     expect(host.created.slice(1)).toEqual([
       [2, "/work/exfresso/penguin"],
       [3, "/work/exfresso/penguin"],
@@ -499,13 +498,13 @@ describe("Workspace", () => {
     const workspace = new Workspace(host);
     press(workspace, "ctrl+t", "c");
     expect(workspace.openPaneNear(1, "right", ["q-space", "pane", "comments"], { name: "comments" })).toBe(3);
-    expect([workspace.active, workspace.tab.focused]).toEqual([0, 3]);
+    expect([workspace.active, workspace.focused]).toEqual([0, 3]);
     expect(workspace.tab.root).toMatchObject({ kind: "split", axis: "row", children: [{ id: 1 }, { id: 3 }] });
     expect(host.tabOf.get(3)).toBe(workspace.tabs[0]!.id);
     expect(host.commands.get(3)).toEqual(["q-space", "pane", "comments"]);
     expect(workspace.paneNames.get(3)).toBe("comments");
     expect(workspace.openPaneNear(3, "tab", ["htop"], { focus: false })).toBe(4);
-    expect(workspace.tab.focused).toBe(3);
+    expect(workspace.focused).toBe(3);
     expect(workspace.tab.root).toMatchObject({ children: [{ id: 1 }, { kind: "tabs", panes: [3, 4] }] });
     expect(workspace.openPaneNear(1, "below", ["top"])).toBe(5);
     expect(workspace.tab.root).toMatchObject({ children: [{ kind: "split", axis: "column", children: [{ id: 1 }, { id: 5 }] }, {}] });
@@ -521,15 +520,15 @@ describe("Workspace", () => {
     workspace.openProject("merlin");
     expect(workspace.tab.root).toMatchObject({ children: [{ id: 2 }, { kind: "tabs", panes: [3, 4], selected: 0 }] });
     press(workspace, "alt+s", "alt+s");
-    expect(workspace.tab.focused).toBe(3);
+    expect(workspace.focused).toBe(3);
     press(workspace, "alt+e");
-    expect(workspace.tab.focused).toBe(4);
+    expect(workspace.focused).toBe(4);
     expect(workspace.tab.root).toMatchObject({ children: [{}, { selected: 1 }] });
     press(workspace, "alt+h");
-    expect(workspace.tab.focused).toBe(2);
+    expect(workspace.focused).toBe(2);
     expect(workspace.tab.root).toMatchObject({ children: [{}, { selected: 1 }] });
     press(workspace, "alt+s");
-    expect(workspace.tab.focused).toBe(4);
+    expect(workspace.focused).toBe(4);
     press(workspace, "ctrl+p", "n");
     expect(workspace.tab.root).toMatchObject({ children: [{}, { panes: [3, 4, 5], selected: 2 }] });
     press(workspace, "alt+h", "ctrl+p", "n");
@@ -679,7 +678,7 @@ describe("Workspace", () => {
     press(workspace, "ctrl+t", "c");
     workspace.openPopup(workspace.reservePaneId(), "Question", 1);
     press(workspace, "alt+a");
-    expect([workspace.active, workspace.tab.focused]).toEqual([0, 1]);
+    expect([workspace.active, workspace.focused]).toEqual([0, 1]);
     expect(workspace.popup?.title).toBe("Question");
   });
 
@@ -688,7 +687,7 @@ describe("Workspace", () => {
     press(workspace, "ctrl+p", "r", "ctrl+p", "s", "ctrl+p", "s");
     expect(workspace.tab.root).toMatchObject({ children: [{}, { kind: "tabs", panes: [2, 3, 4] }] });
     press(workspace, "alt+o", "ctrl+p", "x");
-    expect(workspace.tab.focused).toBe(4);
+    expect(workspace.focused).toBe(4);
   });
 
   test("Ctrl+t a goes back to the previous tab", () => {
@@ -727,10 +726,10 @@ describe("Workspace", () => {
       workspace.setAgentState(1, "done");
       workspace.setAgentState(2, "waiting");
       press(workspace, "alt+a");
-      expect([workspace.active, workspace.tab.focused]).toEqual([0, 2]);
+      expect([workspace.active, workspace.focused]).toEqual([0, 2]);
       workspace.setAgentState(2, undefined);
       press(workspace, "alt+a");
-      expect([workspace.active, workspace.tab.focused]).toEqual([0, 1]);
+      expect([workspace.active, workspace.focused]).toEqual([0, 1]);
       expect(workspace.agents.get(1)).toBe("done");
       press(workspace, "x");
       expect(workspace.agents.has(1)).toBe(false);
@@ -755,7 +754,7 @@ describe("Workspace", () => {
       expect(workspace.setCommandState(2, "succeeded")).toBe(true);
       expect(workspace.agents.get(1)).toBe("working");
       press(workspace, "alt+a");
-      expect([workspace.active, workspace.tab.focused]).toEqual([0, 2]);
+      expect([workspace.active, workspace.focused]).toEqual([0, 2]);
       press(workspace, "x");
       expect(workspace.commands.has(2)).toBe(false);
       expect(workspace.agents.get(1)).toBe("working");
@@ -846,32 +845,66 @@ describe("Workspace", () => {
       expect(workspace.tab.drawer).toBeUndefined();
     });
 
-    test("Alt d focuses an open drawer before hiding it", () => {
+    test("leaving the drawer hides it, by Alt t, Alt o/e, or a click above, and other focus keys stay put", () => {
       const { workspace } = split();
       press(workspace, "alt+d", "alt+t");
+      expect(workspace.drawerOf()).toBeUndefined();
       expect(workspace.focused).toBe(2);
-      expect(workspace.drawerOf()).toBeDefined();
-      press(workspace, "alt+d");
-      expect(workspace.focused).toBe(3);
-      expect(workspace.drawerOf()).toBeDefined();
-    });
-
-    test("focus keys and pane cycling reach the drawer while it is shown", () => {
-      const { workspace } = split();
-      press(workspace, "alt+d", "alt+t");
-      expect(workspace.focused).toBe(2);
-      press(workspace, "alt+n");
-      expect(workspace.focused).toBe(3);
-      press(workspace, "alt+h");
+      press(workspace, "alt+d", "alt+h", "alt+s", "alt+n");
       expect(workspace.focused).toBe(3);
       press(workspace, "alt+e");
-      expect(workspace.focused).toBe(1);
-      press(workspace, "alt+o");
-      expect(workspace.focused).toBe(3);
-      press(workspace, "alt+o");
+      expect(workspace.drawerOf()).toBeUndefined();
       expect(workspace.focused).toBe(2);
-      press(workspace, "alt+t", "alt+t", "alt+d", "alt+d", "alt+e", "alt+e");
+      press(workspace, "alt+d");
+      workspace.focusPane(1);
+      expect(workspace.drawerOf()).toBeUndefined();
       expect(workspace.focused).toBe(1);
+    });
+
+    test("focus keys and pane cycling leave a hidden drawer alone", () => {
+      const { workspace } = split();
+      press(workspace, "alt+n", "alt+e", "alt+e");
+      expect(workspace.drawerOf()).toBeUndefined();
+      expect(workspace.tab.drawer).toBeUndefined();
+      expect(workspace.focused).toBe(2);
+    });
+
+    test("a popup over the drawer leaves it open and focused once it closes", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d");
+      expect(workspace.openPopup(90, "Allow Write?", 3)).toBe(false);
+      workspace.popupExited(90);
+      expect(workspace.focused).toBe(3);
+    });
+
+    test("panes opened from the drawer go beside the pane above it", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d");
+      const id = workspace.openPaneNear(3, "right", ["htop"]);
+      expect(id).toBe(4);
+      expect(paneIds(workspace.tab.root)).toEqual([1, 2, 4]);
+      expect(workspace.drawerOf()).toBeUndefined();
+      expect(workspace.focused).toBe(4);
+    });
+
+    test("commands in the drawer badge the tab, and only notify when the drawer isn't in view", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d");
+      expect(workspace.setCommandState(3, "failed")).toBe(false);
+      expect(workspace.setCommandState(2, "failed")).toBe(true);
+      press(workspace, "alt+d");
+      expect(workspace.setCommandState(3, "succeeded")).toBe(true);
+      expect(workspace.tabCommandState(workspace.tab)).toBe("failed");
+    });
+
+    test("Alt a from the drawer moves on to the next agent", () => {
+      const { workspace } = split();
+      press(workspace, "alt+d");
+      workspace.setAgentState(3, "done");
+      workspace.setAgentState(1, "done");
+      press(workspace, "alt+a");
+      expect(workspace.focused).toBe(1);
+      expect(workspace.drawerOf()).toBeUndefined();
     });
 
     test("pane mode zooms the drawer, and resize mode changes its height within bounds", () => {
@@ -914,11 +947,11 @@ describe("Workspace", () => {
       type(workspace, workspace.tab.name);
       press(workspace, "return");
       expect(host.destroyed).not.toContain(3);
-      expect(workspace.drawerOf()?.id).toBe(3);
       press(workspace, "alt+d");
+      expect(workspace.focused).toBe(3);
       workspace.paneExited(3);
       expect(workspace.tab.drawer).toBeUndefined();
-      expect(workspace.focused).toBe(workspace.tab.focused);
+      expect(workspace.focused).toBe(workspace.tab.layoutFocus);
       press(workspace, "alt+d");
       expect(workspace.drawerOf()?.id).not.toBe(3);
     });
@@ -1038,7 +1071,7 @@ describe("Workspace", () => {
       host.held.add(id);
       press(workspace, "p");
       expect(workspace.tab.root).toMatchObject({ children: [{ id: 2 }, { kind: "tabs", panes: [3, 4, id] }] });
-      expect(workspace.tab.focused).toBe(id);
+      expect(workspace.focused).toBe(id);
       expect(workspace.paneNames.get(id)).toBe("build");
       expect(host.untracked).toEqual([id]);
       expect(workspace.jobs).toEqual([]);
@@ -1081,7 +1114,7 @@ describe("Workspace", () => {
       host.running.set(4, "cargo build");
       press(workspace, "ctrl+s", "b");
       expect(workspace.tab.root).toMatchObject({ children: [{ id: 2 }, { id: 3 }] });
-      expect(workspace.tab.focused).toBe(3);
+      expect(workspace.focused).toBe(3);
       expect(host.tracked).toEqual([4]);
       expect(workspace.tabJobs().map((job) => [job.name, job.command])).toEqual([["cargo build", undefined]]);
       workspace.jobFinished(4, 0);
@@ -1094,7 +1127,7 @@ describe("Workspace", () => {
       workspace.openJob(4);
       press(workspace, "p");
       expect(paneIds(workspace.tab.root)).toEqual([2, 3, 4]);
-      expect(workspace.tab.focused).toBe(4);
+      expect(workspace.focused).toBe(4);
     });
 
     test("an agent running as a job badges its tab, owns its popups, and is found by Alt a and Alt c", () => {
@@ -1217,7 +1250,7 @@ describe("Workspace", () => {
       const newest = workspace.runJob(2, ["make", "test"])!;
       clock.now = 20;
       press(workspace, "ctrl+t", "c");
-      workspace.runJob(workspace.tab.focused, ["elsewhere"]);
+      workspace.runJob(workspace.focused, ["elsewhere"]);
       press(workspace, "ctrl+t", "a", "alt+j");
       expect(workspace.popup).toMatchObject({ id: newest, kind: "job" });
     });
@@ -1226,7 +1259,7 @@ describe("Workspace", () => {
       const clock = { now: 0 };
       const { host, workspace } = ide(clock);
       const merlin = workspace.tab;
-      const agent = merlin.focused;
+      const agent = merlin.layoutFocus;
       const other = paneIds(merlin.root).find((id) => id !== agent)!;
       press(workspace, "ctrl+t", "c");
       workspace.setAgentState(agent, "done", "first");
@@ -1249,7 +1282,7 @@ describe("Workspace", () => {
       expect(workspace.openPopup(90, "Allow Write?", second)).toBe(true);
       press(workspace, "alt+j", "alt+a");
       expect([workspace.tab.name, workspace.popup?.id]).toEqual(["merlin", 90]);
-      expect(workspace.tab.focused).toBe(first);
+      expect(workspace.focused).toBe(first);
       workspace.popupExited(90);
       workspace.active = 0;
       press(workspace, "alt+a");
@@ -1259,7 +1292,7 @@ describe("Workspace", () => {
 
     test("an agent's reply is unread until its pane is seen or peeked at", () => {
       const { host, workspace } = ide({ now: 5 });
-      const agent = workspace.tab.focused;
+      const agent = workspace.focused;
       workspace.setAgentState(agent, "done", "Seen as it came");
       expect(workspace.toasts()).toEqual([]);
       press(workspace, "alt+s");
@@ -1289,9 +1322,9 @@ describe("Workspace", () => {
       const tab = workspace.tab;
       const before = paneIds(tab.root);
       const layoutJob = tab.layoutRuns.get(0)!;
-      const adHoc = workspace.runJob(tab.focused, ["make"])!;
+      const adHoc = workspace.runJob(tab.layoutFocus, ["make"])!;
       press(workspace, "ctrl+p", "r");
-      workspace.openPopup(90, "Allow Write?", tab.focused);
+      workspace.openPopup(90, "Allow Write?", tab.layoutFocus);
       press(workspace, "alt+j");
       press(workspace, "ctrl+t", "shift+r", "x", "return");
       expect(workspace.message).toBe("Left the tab running");
@@ -1318,7 +1351,7 @@ describe("Workspace", () => {
       const { host, workspace } = ide({ now: 0 });
       const first = workspace.tab.name;
       press(workspace, "ctrl+t", "c");
-      const jobs = [workspace.runJob(workspace.tab.focused, ["one"])!, workspace.runJob(workspace.tab.focused, ["two"])!];
+      const jobs = [workspace.runJob(workspace.focused, ["one"])!, workspace.runJob(workspace.focused, ["two"])!];
       press(workspace, "ctrl+t", "x", ...workspace.tab.name.split(""), "return");
       expect(host.destroyed).toEqual(expect.arrayContaining(jobs));
       expect(workspace.jobs).toEqual([]);
@@ -1346,7 +1379,7 @@ describe("Workspace", () => {
   test("Alt keys reach qmux over every kind of popup", () => {
     const host = new FakeHost();
     const workspace = new Workspace(host);
-    const agent = workspace.tab.focused;
+    const agent = workspace.focused;
     workspace.setAgentState(agent, "done", "Built it");
     workspace.openPopup(50, "Deploy?");
     expect(press(workspace, "alt+p", "alt+h")).toEqual([true, false]);
@@ -1376,7 +1409,7 @@ describe("Workspace", () => {
     host.claudes.add(2);
     press(workspace, "alt+c");
     expect(host.composed).toEqual([1, 2]);
-    expect(workspace.tab.focused).toBe(2);
+    expect(workspace.focused).toBe(2);
   });
 
   test("Ctrl+s reaches an ask popup, so forms can submit, but opens jobs mode over a job", () => {

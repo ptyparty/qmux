@@ -117,7 +117,7 @@ export class MuxView {
 
   render(): void {
     const tab = this.workspace.tab;
-    this.renderBody(tab.root, tab.zoomed ? tab.focused : undefined);
+    this.renderBody(tab.root, tab.zoomed ? tab.layoutFocus : undefined);
     const popup = this.renderOverlay();
     const focused = this.workspace.focused;
     for (const id of paneIds(tab.root)) {
@@ -141,6 +141,7 @@ export class MuxView {
 
   private renderDrawer(popup: boolean): void {
     const tabId = this.workspace.tab.id;
+    if (this.drawerTab !== tabId && this.slide) this.detachDrawer();
     const drawer = this.workspace.drawerOf();
     const pane = drawer && this.panes.get(drawer.id);
     const shown = pane ? drawer.id : undefined;
@@ -164,7 +165,7 @@ export class MuxView {
     this.drawerBox.visible = true;
     this.placeSlider();
     const zoomed = drawer.zoomed ? " (zoomed)" : "";
-    pane.show(`${this.paneTitle(drawer.id, pane)} · drawer${zoomed}`, drawer.focused && this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
+    pane.show(`${this.paneTitle(drawer.id, pane)} · drawer${zoomed}`, this.workspace.prompt === undefined && !popup, modeFocusColor(this.workspace.mode));
   }
 
   private attachDrawer(frame: BoxRenderable): void {
@@ -273,7 +274,7 @@ export class MuxView {
   }
 
   private renderBody(root: LayoutNode, zoomed: PaneId | undefined): void {
-    const signature = JSON.stringify([this.workspace.active, this.workspace.tab.id, this.workspace.tab.focused, zoomed, root]);
+    const signature = JSON.stringify([this.workspace.active, this.workspace.tab.id, this.workspace.tab.layoutFocus, zoomed, root]);
     if (signature === this.bodySignature) return;
     this.bodySignature = signature;
     for (const tab of this.workspace.tabs) {
@@ -334,13 +335,13 @@ export class MuxView {
     };
     this.paneTabStrips.push(entry);
     container.add(strip);
-    const shown = this.panes.get(group.panes[shownPaneTab(group, this.workspace.tab.focused)]!);
+    const shown = this.panes.get(group.panes[shownPaneTab(group, this.workspace.tab.layoutFocus)]!);
     if (shown) container.add(this.slot(shown.frame));
     return container;
   }
 
   private renderPaneTabStrips(): void {
-    const focused = this.workspace.tab.focused;
+    const focused = this.workspace.tab.layoutFocus;
     for (const entry of this.paneTabStrips) {
       const selected = shownPaneTab(entry.group, focused);
       const groupFocused = entry.group.panes.includes(this.workspace.focused) && !this.workspace.prompt && !this.workspace.popup;
@@ -375,7 +376,7 @@ export class MuxView {
   }
 
   private paneTitle(id: PaneId, pane: Pane): string {
-    const zoomed = this.workspace.tab.zoomed && id === this.workspace.tab.focused ? " (zoomed)" : "";
+    const zoomed = this.workspace.tab.zoomed && id === this.workspace.tab.layoutFocus ? " (zoomed)" : "";
     const state = this.workspace.agents.get(id);
     const command = this.workspace.commands.get(id);
     const badge = state ? `${agentBadges[state]} ${agentLabels[state]} · ` : "";

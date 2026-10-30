@@ -279,7 +279,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
 
   const openPopup = (title: string, command: string[], askingPane: PaneId | undefined) => {
     const id = workspace.reservePaneId();
-    spawnPane(id, host.cwd(askingPane ?? workspace.tab.focused), command, (exited) => workspace.popupExited(exited), { frameless: true });
+    spawnPane(id, host.cwd(askingPane ?? workspace.focused), command, (exited) => workspace.popupExited(exited), { frameless: true });
     if (workspace.openPopup(id, title, askingPane)) {
       const where = workspace.tabOf(askingPane)?.name ?? "qmux";
       renderer.triggerNotification(title, where);
@@ -304,7 +304,7 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
       workspace.message = `The ${widget.name} widget has nothing to open`;
       return;
     }
-    openViewPopup(workspace.tab.focused, widget.open, widget.name, undefined);
+    openViewPopup(workspace.focused, widget.open, widget.name, undefined);
   }
 
   tray.start();
@@ -314,7 +314,6 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
     if (!pane || pane.id === workspace.focused || workspace.popup) return;
     if (!paneIds(workspace.tab.root).includes(pane.id) && workspace.tab.drawer?.id !== pane.id) return;
     workspace.focusPane(pane.id);
-    workspace.message = "Focus moved by a mouse click";
     refresh();
   });
 

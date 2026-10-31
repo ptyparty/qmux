@@ -113,12 +113,10 @@ export async function runServer(name: string): Promise<void> {
     }
     output.targets = new Set();
     await renderer.suspend();
-    if (!socket.data.closed) {
-      clients.add(socket);
-      for (const bytes of graphics.replay()) send(socket, { type: "output", body: bytes });
-    }
+    if (!socket.data.closed) clients.add(socket);
     output.targets = new Set(clients);
     if (clients.size > 0) await renderer.resume();
+    if (clients.has(socket)) for (const bytes of graphics.replay()) send(socket, { type: "output", body: bytes });
     clientsChanged();
   };
 

@@ -38,6 +38,7 @@ export type Prompt = {
 };
 
 export type PanePlacement = "right" | "below" | "tab";
+export type ComposeContext = { text: string; label: string };
 
 export interface PaneHost {
   create(id: PaneId, cwd: string | undefined, command: string[] | undefined, tabId: number): void;
@@ -46,7 +47,7 @@ export interface PaneHost {
   untrackJob(id: PaneId): void;
   runningCommand(id: PaneId): string | undefined;
   shellCommand(text: string): string[];
-  composeClaude(near: PaneId, candidates: PaneId[]): string | undefined;
+  composeClaude(near: PaneId, candidates: PaneId[], context?: ComposeContext): string | undefined;
   peekReply(near: PaneId, title: string, text: string): void;
   tabClosed(tabId: number): void;
   projects(): Project[];
@@ -161,6 +162,11 @@ export class Workspace {
   tabOf(id: PaneId | undefined): Tab | undefined {
     if (id === undefined) return undefined;
     return this.tabs.find((tab) => this.tabPanes(tab).includes(id));
+  }
+
+  ownerTab(id: PaneId): Tab | undefined {
+    const popupTab = this.popups.find((popup) => popup.id === id)?.tabId;
+    return this.tabOf(id) ?? this.tabs.find((tab) => tab.id === popupTab);
   }
 
   openPopup(id: PaneId, title: string, askingPane?: PaneId): boolean {

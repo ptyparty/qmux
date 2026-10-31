@@ -28,6 +28,9 @@ Usage:
   qmux pane open [--right|--below|--tab|--popup] [--name NAME] [--no-focus] [--width PCT] [--height PCT] -- COMMAND...
       From inside a session, open a pane running COMMAND beside this one, or over this tab with --popup.
       A popup closes when COMMAND succeeds; --width and --height size it. Prints the new pane's id.
+  qmux claude compose --from-stdin --label LABEL
+      From inside a pane, open the message box for this tab's Claude with stdin attached as context.
+      The label names the context in the box; on send, the context goes ahead of the message.
   qmux claude [--resume ID|--continue] [--mode MODE] [-- CLAUDE_ARGS...]
       Run a Claude Code session in this pane with qmux drawing the conversation (experimental).
       From anywhere else in the tab, Alt+c sends it a message.
@@ -261,6 +264,19 @@ async function projectCommand(args: string[]): Promise<void> {
   if (!response.ok) throw new SessionError(response.error);
 }
 
+async function composeFromStdin(label: string | undefined): Promise<void> {
+  if (!label) throw new UsageError("--from-stdin needs --label");
+  const socket = process.env.QMUX_SOCKET;
+  const paneId = Number(process.env.QMUX_PANE_ID);
+  if (!socket || !Number.isInteger(paneId)) throw new UsageError("qmux claude compose --from-stdin works from inside a qmux pane");
+  const text = (await Bun.stdin.text()).trim();
+  if (!text) throw new UsageError("nothing on stdin to attach");
+  const response = await sendControl(socket, { method: "claude.compose", params: { paneId, context: { text, label } } }).catch((error: Error) => {
+    throw new SessionError(error.message);
+  });
+  if (!response.ok) throw new SessionError(response.error);
+}
+
 function layoutArg(arg: string): [string, string] {
   const split = arg.indexOf("=");
   if (split <= 0) throw new UsageError(`--arg must look like KEY=VALUE, got ${arg}`);
@@ -301,9 +317,17 @@ async function paneCommand(args: string[]): Promise<void> {
 async function claudeCommand(args: string[]): Promise<void> {
   const { runClaude, runCompose } = await import("./claude/run.ts");
   if (args[0] === "compose") {
-    const { values } = parse(args.slice(1), { socket: { type: "string" }, name: { type: "string" } });
+    const { values } = parse(args.slice(1), {
+      socket: { type: "string" },
+      name: { type: "string" },
+      "from-stdin": { type: "boolean" },
+      "context-file": { type: "string" },
+      label: { type: "string" },
+    });
+    if (values["from-stdin"]) return composeFromStdin(values.label);
     if (!values.socket) throw new UsageError("missing --socket");
-    return runCompose(values.socket, values.name ?? "Claude");
+    const context = values["context-file"] ? { file: values["context-file"], label: values.label ?? "context" } : undefined;
+    return runCompose(values.socket, values.name ?? "Claude", context);
   }
   const { values, positionals } = parse(args, { resume: { type: "string" }, continue: { type: "boolean" }, mode: { type: "string" } });
   if (values.resume && values.continue) throw new UsageError("pick one of --resume and --continue");

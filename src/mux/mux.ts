@@ -226,16 +226,35 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
         refresh();
       });
     },
-    composeClaude: (near, candidates) => {
+    composeClaude: (near, candidates, context) => {
       const awake = (id: PaneId) => nativeClaudes.has(id) && !workspace.dormant.has(id);
       const target = awake(near) ? near : (candidates.find(awake) ?? (nativeClaudes.has(near) ? near : candidates.find((id) => nativeClaudes.has(id))));
       if (target === undefined) return "No native Claude in this tab";
       if (workspace.dormant.has(target)) {
+        if (context) return "Claude hasn't started in this tab; start it with Alt c first";
         wakeClaude(nativeClaudes.get(target)!);
         return undefined;
       }
       const name = workspace.paneNames.get(target) ?? workspace.jobStatus(target)?.name ?? "Claude";
-      openViewPopup(near, [...selfCommand(), "claude", "compose", "--socket", nativeClaudes.get(target)!, "--name", name], `Message ${name}`, { width: 70, height: 30 });
+      const command = [...selfCommand(), "claude", "compose", "--socket", nativeClaudes.get(target)!, "--name", name];
+      if (!context) {
+        openViewPopup(near, command, `Message ${name}`, { width: 70, height: 30 });
+        return undefined;
+      }
+      const tabId = workspace.tabOf(near)?.id;
+      if (tabId === undefined) return `pane ${near} is not in a tab`;
+      const file = join(tabDirs.tabDir(tabId), `context-${near}-${Date.now()}.md`);
+      command.push(`--context-file=${file}`, `--label=${context.label}`);
+      void Bun.write(file, context.text).then(
+        () => {
+          openViewPopup(near, command, `Message ${name}`, { width: 70, height: 30 });
+          refresh();
+        },
+        (error: Error) => {
+          workspace.message = `Couldn't attach the comment: ${error.message}`;
+          refresh();
+        },
+      );
       return undefined;
     },
     tabClosed: (tabId) => tabDirs.remove(tabId),
@@ -465,7 +484,12 @@ export function createMux(renderer: CliRenderer, options: MuxOptions): Mux {
           return { ok: true };
         }
         case "claude.compose": {
-          const message = host.composeClaude(request.params.paneId, [request.params.paneId]);
+          const { paneId, context } = request.params;
+          const tab = context ? workspace.ownerTab(paneId) : undefined;
+          if (context && !tab) return { ok: false, error: `pane ${paneId} is not in a tab` };
+          const candidates = tab ? workspace.tabPanes(tab) : [paneId];
+          const near = tab && !candidates.includes(paneId) ? tab.layoutFocus : paneId;
+          const message = host.composeClaude(near, candidates, context);
           return message ? { ok: false, error: message } : { ok: true };
         }
         case "agent.prompt": {

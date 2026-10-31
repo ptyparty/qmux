@@ -357,17 +357,30 @@ async function openInbox(
   return { stop, awaken: async () => void (await register(path)), nextWake, forgetWake: () => (wake = undefined) };
 }
 
-export async function runCompose(socket: string, name: string): Promise<void> {
+export async function runCompose(socket: string, name: string, attachment?: { file: string; label: string }): Promise<void> {
+  const context = attachment ? await readAttachment(attachment.file) : undefined;
   const renderer = await createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true });
-  const text = await composeMessage(renderer, name, () => fetchInbox(socket), () => askInbox(socket, { cycleMode: true }));
+  const text = await composeMessage(renderer, name, () => fetchInbox(socket), () => askInbox(socket, { cycleMode: true }), attachment?.label);
   renderer.destroy();
   await renderer.closed;
-  if (text) await deliver(socket, text);
+  if (text) await deliver(socket, withContext(context, text));
+}
+
+async function readAttachment(file: string): Promise<string> {
+  try {
+    return await Bun.file(file).text();
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
+
+export function withContext(context: string | undefined, text: string): string {
+  return context === undefined ? text : `${context.trimEnd()}\n\n${text}`;
 }
 
 type InboxInfo = { commands: SlashCommand[]; mode?: string };
 
-function composeMessage(renderer: CliRenderer, name: string, load: () => Promise<InboxInfo>, cycleMode: () => Promise<InboxInfo>): Promise<string | undefined> {
+function composeMessage(renderer: CliRenderer, name: string, load: () => Promise<InboxInfo>, cycleMode: () => Promise<InboxInfo>, label?: string): Promise<string | undefined> {
   return new Promise((resolve) => {
     let commands: SlashCommand[] = [];
     let loading: Promise<void> | undefined;
@@ -383,6 +396,7 @@ function composeMessage(renderer: CliRenderer, name: string, load: () => Promise
     const box = new BoxRenderable(renderer, { width: "100%", height: "100%", flexDirection: "column", backgroundColor: theme.background, paddingLeft: 1, paddingRight: 1 });
     const header = new TextRenderable(renderer, { content: title(), fg: theme.muted, height: 1, flexShrink: 0 });
     box.add(header);
+    if (label) box.add(new TextRenderable(renderer, { content: ` ${label} `, fg: theme.background, bg: theme.accent, height: 1, flexShrink: 0, wrapMode: "none" }));
     const send = () => resolve(input.plainText.trim() || undefined);
     const input: TextareaRenderable = new TextareaRenderable(renderer, {
       flexGrow: 1,

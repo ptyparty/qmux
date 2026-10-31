@@ -708,6 +708,16 @@ describe("Workspace", () => {
     expect(workspace.openViewPopup(workspace.reservePaneId(), "Nowhere", 99)).toBeUndefined();
   });
 
+  test("a popup belongs to the tab it opened over", () => {
+    const workspace = new Workspace(new FakeHost());
+    const view = workspace.reservePaneId();
+    workspace.openViewPopup(view, "Notebook", 1);
+    expect(workspace.tabOf(view)).toBeUndefined();
+    expect(workspace.ownerTab(view)).toBe(workspace.tab);
+    expect(workspace.ownerTab(1)).toBe(workspace.tab);
+    expect(workspace.ownerTab(99)).toBeUndefined();
+  });
+
   test("a view popup held after a failure closes on the next key", () => {
     const host = new FakeHost();
     const workspace = new Workspace(host);

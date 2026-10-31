@@ -1,5 +1,7 @@
 # qmux
 
+<p align="center"><img src="docs/qmux.svg" alt="A tall blue letter Q drawn as a terminal window split into panes, with a &gt; prompt for its tail" width="160"></p>
+
 A terminal multiplexer that agents can drive. Phase 1 is the agent forms layer: an agent asks the user questions, a form pops up in their terminal, and the answers come back as JSON. The form opens as a popup when the agent runs inside qmux, or in a zellij floating pane or a tmux popup.
 
 ## Setup
